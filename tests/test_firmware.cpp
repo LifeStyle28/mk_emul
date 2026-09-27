@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <cstdio>
 #include <string>
 
 namespace {
@@ -121,6 +123,20 @@ TEST_F(FirmwareTest, HardFaultExampleReachesHandler) {
 
     runFor(m, 10000); // HardFault_Handler turns the red LED on and spins
     EXPECT_TRUE(m.snapshot().leds & 0x4);
+}
+
+// Emulation speed at Max (no pacing), in millions of instructions per second. Not a check, so
+// disabled by default; run with:
+//   build\tests\mk_emul_tests --gtest_also_run_disabled_tests --gtest_filter=*Speed*
+TEST_F(FirmwareTest, DISABLED_Speed) {
+    for (const char *name : {"blinky", "uart_printf", "systick_exti"}) {
+        load(name);
+        constexpr uint64_t kInsns = 50000000;
+        const auto t0 = std::chrono::steady_clock::now();
+        runFor(m, kInsns);
+        const double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        std::printf("%-14s %6.1f MIPS\n", name, kInsns / sec / 1e6);
+    }
 }
 
 } // namespace

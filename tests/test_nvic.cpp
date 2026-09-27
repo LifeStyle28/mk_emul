@@ -2,6 +2,8 @@
 // assembled into tests/cortex_programs.inc by tests/asm/gen.py.
 #include "TestUtil.h"
 
+#include "core/Addresses.h"
+
 #include <unicorn/arm.h>
 
 #include <gtest/gtest.h>
@@ -141,6 +143,26 @@ TEST_F(NvicTest, NestedInterruptsReturnToTheRightPlace) {
     EXPECT_EQ(ipsr(), 0u);
     EXPECT_EQ(m.cpu().sp(), kStackTop);
     EXPECT_EQ(r(5), 1u) << "IRQ0 resumed and finished after IRQ1";
+}
+
+// SysTick->VAL and TIMx->CNT are brought up to date on every access, not only between chunks,
+// so polling a counter sees it advance by exactly the elapsed cycles.
+TEST_F(NvicTest, CountersAreExactWithinChunk) {
+    loadImage(m, program(kCounters));
+    run(60);
+    EXPECT_EQ(r(2) - r(3), 11u) << "SysTick VAL counts down 1 per cycle (10 NOPs + LDR)";
+    EXPECT_EQ(r(5) - r(4), 11u) << "TIM2 CNT counts up 1 per cycle";
+}
+
+// Enabling a short timer period mid-chunk shortens the chunk: the update interrupt comes after
+// ARR+1 = 21 cycles, not at the end of the 256-instruction chunk.
+TEST_F(NvicTest, TimerEnabledMidChunkInterruptsOnTime) {
+    loadImage(m, program(kTimerArr).vector(16 + mcu::kIrqTim2, F + 0x140));
+    run(400);
+    EXPECT_EQ(r(7), 1u) << "handler ran once";
+    // 21 cycles after CEN: `movs r5, #0` + 10 iterations of the 2-instruction loop.
+    EXPECT_GE(r(6), 9u);
+    EXPECT_LE(r(6), 11u);
 }
 
 } // namespace

@@ -86,6 +86,12 @@ void Machine::wirePeripherals() {
             }
         }
     });
+    bus_.setAccessHooks([this] { syncTimers(); },
+                        [this] {
+                            // A timer write may bring the next interrupt closer: end the chunk there.
+                            if (inChunk_)
+                                cpu_.limitRun(cpu_.lastRunCount() + cyclesToNextEvent());
+                        });
     cpu_.setInterruptPoll(nvic_.pendingFlag(), [this] { return nvic_.wouldPreempt(cpu_); });
 }
 
@@ -211,6 +217,16 @@ void Machine::tickPeripherals(uint32_t insns) {
     tim3_.tick(insns, rcc_.sysclk());
 }
 
+void Machine::syncTimers() {
+    if (!inChunk_)
+        return;
+    const uint64_t done = cpu_.lastRunCount();
+    if (done > chunkTicked_) {
+        tickPeripherals(static_cast<uint32_t>(done - chunkTicked_));
+        chunkTicked_ = done;
+    }
+}
+
 void Machine::deliverFault() {
     Nvic::FaultType type = Nvic::FaultType::Other;
     switch (cpu_.faultKind()) {
@@ -257,8 +273,11 @@ uint32_t Machine::cyclesToNextEvent() const {
 }
 
 CpuEngine::StopReason Machine::runChunk(uint32_t n) {
+    inChunk_ = true;
+    chunkTicked_ = 0;
     const auto r = cpu_.run(n);
-    tickPeripherals(static_cast<uint32_t>(cpu_.lastRunCount()));
+    syncTimers(); // the rest of the chunk
+    inChunk_ = false;
     if (svcLockup_) {
         svcLockup_ = false;
         status_ = "Lockup: SVC inside HardFault/NMI";
@@ -285,9 +304,10 @@ CpuEngine::StopReason Machine::step() {
 }
 
 CpuEngine::StopReason Machine::runQuantum(uint32_t insns) {
-    // Timers/CNT are updated between chunks, so keep chunks short; they also end exactly when
-    // SysTick/TIM pend an interrupt, and the CPU stops early on its own when one becomes
-    // pending from code (see CpuEngine::setInterruptPoll), so interrupt latency is exact.
+    // Chunks end exactly when SysTick/TIM pend an interrupt (also after a timer write moves it
+    // closer), and the CPU stops early on its own when one becomes pending from code (see
+    // CpuEngine::setInterruptPoll), so interrupt latency is exact. Timers are synced on every
+    // MMIO access, so the chunk size only bounds how long the UI waits for a pause.
     constexpr uint32_t kChunk = 256;
     uint32_t left = insns;
     int idle = 0;

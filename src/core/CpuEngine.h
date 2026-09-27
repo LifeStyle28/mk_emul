@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -64,6 +65,8 @@ public:
 
     StopReason run(uint64_t maxInsns);
     void stop();
+    // During run(): stop once `insns` instructions of this run have executed, if that is sooner.
+    void limitRun(uint64_t insns) { runLimit_ = std::min(runLimit_, insns); }
 
     void addBreakpoint(uint32_t addr);
     void removeBreakpoint(uint32_t addr);

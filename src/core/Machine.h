@@ -96,6 +96,9 @@ private:
     void applyResetCpu();
     LoadedImage applyImage(LoadedImage img, const std::string &name);
     void tickPeripherals(uint32_t insns);
+    // Called on MMIO access during a chunk: advance timers to the current instruction, so
+    // SysTick->VAL / TIMx->CNT read exactly, and cycles before a clock change use the old clock.
+    void syncTimers();
     void deliverFault();
     void resetMcu(); // peripherals, NVIC, CPU; keeps RAM and the instruction counter
     // Runs up to n instructions, then advances timers and takes faults, SVC lockup,
@@ -130,6 +133,8 @@ private:
     bool buttonPressed_ = false;
     bool firmwareLoaded_ = false;
     bool svcLockup_ = false;
+    bool inChunk_ = false;
+    uint64_t chunkTicked_ = 0; // instructions of the current chunk already given to the timers
     uint32_t vectorBase_ = mcu::kFlashBase;
     std::string status_ = "Idle";
     UartTx uartTx_;
