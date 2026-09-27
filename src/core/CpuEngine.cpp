@@ -120,8 +120,8 @@ MK_NOINLINE void CpuEngine::reportNoCoprocessor(uint32_t addr) {
 bool CpuEngine::fpAccessAllowed() const {
     if (fpAccess_ == 3)
         return true;
-    if (fpAccess_ == 1) // privileged: handler mode or CONTROL.nPRIV = 0
-        return ipsr() != 0 || (control() & 1u) == 0;
+    if (fpAccess_ == 1)
+        return privileged();
     return false;
 }
 
@@ -336,6 +336,7 @@ void CpuEngine::installHooks() {
                         uc_emu_stop(uc);
                         return;
                     }
+                    cpu->currentInsn_ = static_cast<uint32_t>(address);
                     ++cpu->runExecuted_;
                 },
                 self, 1, 0);
@@ -383,7 +384,15 @@ CpuEngine::StopReason CpuEngine::run(uint64_t maxInsns) {
     skipNextBreakpoint_ = hasBreakpoint(pcNow);
     const uint64_t start = static_cast<uint64_t>(pcNow) | 1ull;
     // count = 0: the code hook above enforces maxInsns and keeps the exact count.
+    rewindToCurrent_ = false;
     const uc_err err = uc_emu_start(uc_, start, 0, 0, 0);
+    if (rewindToCurrent_) {
+        // Precise fault: the faulting instruction did not complete.
+        rewindToCurrent_ = false;
+        setPc(currentInsn_);
+        if (runExecuted_ > 0)
+            --runExecuted_;
+    }
     insnCount_ += runExecuted_;
     if (err != UC_ERR_OK && lastStop_ != StopReason::Breakpoint && lastStop_ != StopReason::InterruptHook) {
         lastStop_ = StopReason::Fault;
@@ -409,6 +418,17 @@ CpuEngine::StopReason CpuEngine::run(uint64_t maxInsns) {
             onFault_(lastError_, pc());
     }
     return lastStop_;
+}
+
+void CpuEngine::raiseBusFault(uint32_t addr, bool write, const std::string &reason) {
+    lastStop_ = StopReason::Fault;
+    faultKind_ = write ? FaultKind::WriteUnmapped : FaultKind::ReadUnmapped;
+    faultAddress_ = addr;
+    lastError_ = reason;
+    rewindToCurrent_ = true;
+    if (onFault_)
+        onFault_(lastError_, faultAddress_);
+    uc_emu_stop(uc_);
 }
 
 void CpuEngine::stop() {

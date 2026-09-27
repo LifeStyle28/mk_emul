@@ -238,6 +238,36 @@ TEST_F(NvicTest, CpacrPrivilegedOnlyFaultsInUnprivilegedThread) {
     EXPECT_EQ(m.cpu().sp(), kStackTop - 0x20u) << "frame on MSP, handler runs on it";
 }
 
+TEST_F(NvicTest, HandlerFpContextStartsWithFpdscr) {
+    loadImage(m, program(kFpdscr).vector(kExcSvc, F + 0x180));
+    run(100);
+    EXPECT_EQ(r(4), 0u) << "thread FPSCR";
+    EXPECT_EQ(r(5), 0x03C00000u) << "handler FPSCR = FPDSCR";
+    EXPECT_EQ(r(6), 0u) << "thread FPSCR restored on return";
+}
+
+// The PPB (NVIC/SCB/SysTick) is privileged-only: an unprivileged write is a precise BusFault
+// (escalated to HardFault, BusFault is not enabled) and has no effect.
+// 0x100: movs r0,#1 ; msr CONTROL,r0 ; isb ; ldr r1,=0xE000E100 (NVIC_ISER0) ; str r0,[r1] ;
+//        adds r5,#1 ; b .       0x180: HardFault: movs r2,#0x42 ; b .
+TEST_F(NvicTest, UnprivilegedAccessToNvicIsPreciseBusFault) {
+    loadImage(m, program({0x2001, 0xF380, 0x8814, 0xF3BF, 0x8F6F, 0x4903, 0x6008, 0x3501, 0xE7FE, 0xBF00, 0xBF00,
+                          0xBF00, 0xE100, 0xE000})
+                     .vector(3, F + 0x180)
+                     .code(F + 0x180, {0x2242, 0xE7FE}));
+    ASSERT_EQ(m.runQuantum(100), CpuEngine::StopReason::Fault);
+    EXPECT_EQ(m.status(), "HardFault: unprivileged write to system register @ 0xE000E100");
+    const auto s = m.snapshot();
+    EXPECT_EQ(s.cfsr, 0x00008200u) << "PRECISERR | BFARVALID";
+    EXPECT_EQ(s.bfar, 0xE000E100u);
+    EXPECT_EQ(s.hfsr, 0x40000000u) << "FORCED";
+    EXPECT_EQ(m.cpu().read32(m.cpu().sp() + 24), F + 0x10Cu) << "stacked PC = the faulting str";
+    EXPECT_EQ(r(5), 0u) << "the next instruction did not run";
+    EXPECT_EQ(m.bus().read(0xE000E100u, 4), 0u) << "write had no effect";
+    m.runQuantum(20);
+    EXPECT_EQ(r(2), 0x42u) << "HardFault handler runs";
+}
+
 // Thread on PSP, privileged and then unprivileged (as RTOS tasks): the frame goes onto PSP,
 // the handler runs on MSP, and the return restores PSP, SPSEL and nPRIV.
 TEST_F(NvicTest, ExceptionsFromPspThreadPrivilegedAndUnprivileged) {

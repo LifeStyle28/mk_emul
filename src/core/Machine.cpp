@@ -78,6 +78,18 @@ void Machine::wirePeripherals() {
     cpu_.mapMmio(mcu::kSramBitbandBase, mcu::kSramBitbandSize, &bus_);
     cpu_.mapMmio(mcu::kPeriphBitbandBase, mcu::kPeriphBitbandSize, &bus_);
     bus_.setUnmappedHook([this](uint32_t addr, bool write) { onUnmappedAccess(addr, write); });
+    bus_.setPpbAccessCheck([this](uint32_t addr, bool write) {
+        // The PPB (NVIC, SCB, SysTick, DWT, ...) is privileged-only: unprivileged thread code
+        // gets a precise BusFault (PRECISERR, BFAR = addr). Peripherals at 0x40000000 stay
+        // accessible, as on the MCU without an MPU. UI reads outside a chunk are not checked.
+        if (!inChunk_ || cpu_.privileged())
+            return true;
+        char msg[80];
+        std::snprintf(msg, sizeof(msg), "unprivileged %s system register @ 0x%08X", write ? "write to" : "read from",
+                      static_cast<unsigned>(addr));
+        cpu_.raiseBusFault(addr, write, msg);
+        return false;
+    });
     bus_.setMemoryAccess([this](uint32_t addr) { return cpu_.read32(addr); },
                          [this](uint32_t addr, uint32_t value) { cpu_.write32(addr, value); });
 

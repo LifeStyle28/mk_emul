@@ -86,6 +86,8 @@ void MmioBus::bitbandWrite(uint32_t alias, uint32_t value) {
 uint32_t MmioBus::read(uint32_t addr, unsigned size) {
     if (isBitbandAlias(addr))
         return bitbandRead(addr & ~3u);
+    if (addr >= kPpbStart && ppbCheck_ && !ppbCheck_(addr, false))
+        return 0;
     auto *p = find(addr);
     if (!p) {
         if (unmapped_)
@@ -103,6 +105,8 @@ void MmioBus::write(uint32_t addr, uint32_t value, unsigned size) {
         bitbandWrite(addr & ~3u, value);
         return;
     }
+    if (addr >= kPpbStart && ppbCheck_ && !ppbCheck_(addr, true))
+        return;
     auto *p = find(addr);
     if (!p) {
         if (unmapped_)

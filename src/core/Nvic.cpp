@@ -233,7 +233,17 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
     }
 
     // Still in the interrupted mode: the handler runs on MSP (SPSEL = 0) without an FP context.
-    cpu.setControl(control & ~(1u | 2u | kControlFpca));
+    // Its first FP instruction creates a new FP context with FPSCR = FPDSCR (FPCCR.ASPEN).
+    // Unicorn does that itself, but from its own FPDSCR, which the API cannot set and which
+    // stays 0. So for a non-zero FPDSCR the context is created here: FPSCR = FPDSCR and
+    // FPCA = 1. Only difference from the MCU: an exception nested in such a handler pushes an
+    // extended frame even if the handler used no FP instruction (same register values).
+    uint32_t handlerControl = control & ~(1u | 2u | kControlFpca);
+    if ((fpccr_ & (1u << 31)) && fpdscr_ != 0) {
+        cpu.setFpscr(fpdscr_);
+        handlerControl |= kControlFpca;
+    }
+    cpu.setControl(handlerControl);
     cpu.setMsp(msp);
     cpu.setPsp(psp);
 

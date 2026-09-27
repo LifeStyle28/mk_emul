@@ -82,6 +82,11 @@ public:
     void stop();
     // During run(): stop once `insns` instructions of this run have executed, if that is sooner.
     void limitRun(uint64_t insns) { runLimit_ = std::min(runLimit_, insns); }
+    // From an MMIO callback: the current instruction takes a precise BusFault (data access at
+    // addr). The run stops and PC is set back to that instruction, which does not count.
+    void raiseBusFault(uint32_t addr, bool write, const std::string &reason);
+    // Handler mode or CONTROL.nPRIV = 0.
+    bool privileged() const { return ipsr() != 0 || (control() & 1u) == 0; }
 
     void addBreakpoint(uint32_t addr);
     void removeBreakpoint(uint32_t addr);
@@ -148,4 +153,6 @@ private:
     StopReason lastStop_ = StopReason::None;
     std::string lastError_;
     bool skipNextBreakpoint_ = false;
+    uint32_t currentInsn_ = 0; // address of the instruction being executed (code hook)
+    bool rewindToCurrent_ = false;
 };

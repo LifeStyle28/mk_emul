@@ -28,6 +28,10 @@ public:
 
     // Called on an access that no peripheral covers (reads as 0, writes are dropped).
     void setUnmappedHook(std::function<void(uint32_t addr, bool write)> hook) { unmapped_ = std::move(hook); }
+    // Asked before every access to the Private Peripheral Bus (0xE0000000+: NVIC, SCB, SysTick,
+    // DWT, ...); returning false blocks it (reads 0) -- unprivileged code gets a BusFault.
+    static constexpr uint32_t kPpbStart = 0xE0000000u;
+    void setPpbAccessCheck(std::function<bool(uint32_t addr, bool write)> check) { ppbCheck_ = std::move(check); }
 
 private:
     uint32_t bitbandRead(uint32_t alias);
@@ -39,4 +43,5 @@ private:
     std::function<void()> beforeAccess_;
     std::function<void()> afterWrite_;
     std::function<void(uint32_t, bool)> unmapped_;
+    std::function<bool(uint32_t, bool)> ppbCheck_;
 };
