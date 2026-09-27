@@ -2,6 +2,8 @@
 
 #include "ui/bridge/CHighlighter.h"
 
+#include "core/Addresses.h"
+
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -112,6 +114,8 @@ void MachineWorker::requestMemory(quint32 addr) {
 void MachineWorker::requestDisasm() {
     const uint32_t pc = machine_.cpu().pc();
     uint32_t start = pc > 32 ? (pc - 32) & ~1u : pc & ~1u;
+    if (pc >= mcu::kFlashBase && start < mcu::kFlashBase)
+        start = mcu::kFlashBase; // nothing is mapped just below flash
     uint8_t buf[128];
     machine_.readMemory(start, buf, sizeof(buf));
     auto lines = disasm_.disassemble(buf, sizeof(buf), start, pc, machine_.breakpoints());

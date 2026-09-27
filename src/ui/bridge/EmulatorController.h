@@ -124,6 +124,6 @@ private:
     QString pcText_ = QStringLiteral("0x00000000");
     QString breakpointText_ = QStringLiteral("0x08000008");
     QString memoryAddressText_ = QStringLiteral("0x20000000");
-    QString firmwarePath_;
+    QString firmwarePath_ = QStringLiteral("(builtin blinky)"); // Machine::initialize loads it
     QString dataRoot_;
 };

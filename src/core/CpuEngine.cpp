@@ -99,8 +99,21 @@ void CpuEngine::writeMem(uint32_t addr, const void *data, size_t size) {
 }
 
 void CpuEngine::readMem(uint32_t addr, void *data, size_t size) const {
-    if (uc_mem_read(uc_, addr, data, size) != UC_ERR_OK)
-        std::memset(data, 0, size);
+    if (uc_mem_read(uc_, addr, data, size) == UC_ERR_OK)
+        return;
+    // The range touches unmapped memory (e.g. a disassembly window just below flash): read it
+    // page by page so the mapped part is still returned; unmapped pages read as zero.
+    constexpr uint64_t kPage = 0x1000;
+    auto *out = static_cast<uint8_t *>(data);
+    uint64_t a = addr;
+    const uint64_t end = static_cast<uint64_t>(addr) + size;
+    while (a < end) {
+        const uint64_t chunkEnd = std::min(end, (a / kPage + 1) * kPage);
+        const size_t n = static_cast<size_t>(chunkEnd - a);
+        if (uc_mem_read(uc_, a, out + (a - addr), n) != UC_ERR_OK)
+            std::memset(out + (a - addr), 0, n);
+        a = chunkEnd;
+    }
 }
 
 uint32_t CpuEngine::read32(uint32_t addr) const {
