@@ -56,6 +56,7 @@ public:
     void readBanked();
 
     enum class StopReason { None, Quantum, Breakpoint, Fault, InterruptHook, Halted };
+    enum class FaultKind { None, ReadUnmapped, WriteUnmapped, FetchUnmapped, InvalidInsn, Unaligned, Other };
 
     StopReason run(uint64_t maxInsns);
     void stop();
@@ -73,6 +74,8 @@ public:
     void setFaultHandler(FaultHandler handler);
 
     uint64_t instructionCount() const { return insnCount_; }
+    uint64_t lastRunCount() const { return runExecuted_; }
+    FaultKind faultKind() const { return faultKind_; }
     const std::string &lastError() const { return lastError_; }
     StopReason lastStop() const { return lastStop_; }
     uint32_t faultAddress() const { return faultAddress_; }
@@ -81,17 +84,18 @@ public:
 
 private:
     void installHooks();
-    void rebuildBreakpointHooks();
 
     uc_engine *uc_ = nullptr;
     InterruptHandler onInterrupt_;
     FaultHandler onFault_;
     std::unordered_set<uint32_t> breakpoints_;
-    std::vector<uint64_t> bpHooks_;
     uint64_t codeHook_ = 0;
     uint64_t intrHook_ = 0;
     uint64_t memHook_ = 0;
     uint64_t insnCount_ = 0;
+    uint64_t runLimit_ = 0;
+    uint64_t runExecuted_ = 0;
+    FaultKind faultKind_ = FaultKind::None;
     uint32_t faultAddress_ = 0;
     StopReason lastStop_ = StopReason::None;
     std::string lastError_;

@@ -34,7 +34,8 @@ void MmioBus::write(uint32_t addr, uint32_t value, unsigned size) {
         p->write32(aligned, value);
         return;
     }
-    uint32_t word = p->read32(aligned);
+    // Must not use read32(): reading e.g. USARTx->DR pops the RX FIFO.
+    uint32_t word = p->partialWriteBase(aligned);
     word = insertSized(word, addr, size, value);
     p->write32(aligned, word);
 }

@@ -1,5 +1,7 @@
 # mk_emul — STM32F407 emulator
 
+> Branch `my-version`: list of changes and fixes relative to the original repository — see [CHANGELOG.md](CHANGELOG.md).
+
 Desktop emulator of **STM32F407VG** (Cortex-M4): Unicorn Engine for the CPU, a custom MMIO model for peripherals, Qt 6 Quick/QML UI.
 
 ## Features
@@ -37,3 +39,4 @@ Copy `third_party/toolchain` next to the exe as `toolchain\`, or set `ARM_NONE_E
 - `examples/blinky` — GPIOD 12–15 toggle
 - `examples/uart_printf` — USART2 text
 - `examples/systick_exti` — SysTick delay + EXTI0 (USER button)
+- `examples/hardfault` — unmapped read → `HardFault_Handler`, shows CFSR/HFSR/BFAR

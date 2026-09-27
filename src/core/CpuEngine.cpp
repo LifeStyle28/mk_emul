@@ -6,6 +6,7 @@
 #include <unicorn/arm.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -61,7 +62,6 @@ void CpuEngine::close() {
         return;
     uc_close(uc_);
     uc_ = nullptr;
-    bpHooks_.clear();
     codeHook_ = 0;
     intrHook_ = 0;
     memHook_ = 0;
@@ -164,13 +164,20 @@ void CpuEngine::installHooks() {
                     cpu->faultAddress_ = static_cast<uint32_t>(addr);
                     cpu->lastStop_ = StopReason::Fault;
                     const char *kind = "memory";
-                    if (type == UC_MEM_READ_UNMAPPED)
+                    cpu->faultKind_ = FaultKind::Other;
+                    if (type == UC_MEM_READ_UNMAPPED) {
                         kind = "read unmapped";
-                    else if (type == UC_MEM_WRITE_UNMAPPED)
+                        cpu->faultKind_ = FaultKind::ReadUnmapped;
+                    } else if (type == UC_MEM_WRITE_UNMAPPED) {
                         kind = "write unmapped";
-                    else if (type == UC_MEM_FETCH_UNMAPPED)
+                        cpu->faultKind_ = FaultKind::WriteUnmapped;
+                    } else if (type == UC_MEM_FETCH_UNMAPPED) {
                         kind = "fetch unmapped";
-                    cpu->lastError_ = std::string(kind) + " @ " + std::to_string(addr);
+                        cpu->faultKind_ = FaultKind::FetchUnmapped;
+                    }
+                    char buf[64];
+                    std::snprintf(buf, sizeof(buf), "%s @ 0x%08X", kind, static_cast<unsigned>(addr));
+                    cpu->lastError_ = buf;
                     if (cpu->onFault_)
                         cpu->onFault_(cpu->lastError_, cpu->faultAddress_);
                     uc_emu_stop(uc);
@@ -178,49 +185,40 @@ void CpuEngine::installHooks() {
                 },
                 self, 1, 0);
 
-    rebuildBreakpointHooks();
-}
-
-void CpuEngine::rebuildBreakpointHooks() {
-    for (auto h : bpHooks_)
-        uc_hook_del(uc_, h);
-    bpHooks_.clear();
-
-    for (uint32_t addr : breakpoints_) {
-        uc_hook h = 0;
-        uint64_t a = addr & ~1u;
-        uc_hook_add(uc_, &h, UC_HOOK_CODE,
-                    (void *)+[](uc_engine *uc, uint64_t address, uint32_t, void *user) {
-                        auto *cpu = static_cast<CpuEngine *>(user);
-                        if (cpu->skipNextBreakpoint_) {
-                            cpu->skipNextBreakpoint_ = false;
+    // One hook for every instruction: enforces the run limit, checks breakpoints and counts
+    // instructions that actually executed. uc_emu_stop() from a code hook stops *before* the
+    // current instruction, so it is not counted.
+    uc_hook_add(uc_, &codeHook_, UC_HOOK_CODE,
+                (void *)+[](uc_engine *uc, uint64_t address, uint32_t, void *user) {
+                    auto *cpu = static_cast<CpuEngine *>(user);
+                    if (cpu->runExecuted_ >= cpu->runLimit_) {
+                        uc_emu_stop(uc);
+                        return;
+                    }
+                    if (!cpu->breakpoints_.empty() &&
+                        cpu->breakpoints_.count(static_cast<uint32_t>(address) & ~1u)) {
+                        if (!cpu->skipNextBreakpoint_) {
+                            cpu->lastStop_ = StopReason::Breakpoint;
+                            uc_emu_stop(uc);
                             return;
                         }
-                        cpu->lastStop_ = StopReason::Breakpoint;
-                        uc_emu_stop(uc);
-                        (void)address;
-                    },
-                    this, a, a);
-        bpHooks_.push_back(h);
-    }
+                    }
+                    cpu->skipNextBreakpoint_ = false;
+                    ++cpu->runExecuted_;
+                },
+                self, 1, 0);
 }
 
 void CpuEngine::addBreakpoint(uint32_t addr) {
     breakpoints_.insert(addr & ~1u);
-    if (uc_)
-        rebuildBreakpointHooks();
 }
 
 void CpuEngine::removeBreakpoint(uint32_t addr) {
     breakpoints_.erase(addr & ~1u);
-    if (uc_)
-        rebuildBreakpointHooks();
 }
 
 void CpuEngine::clearBreakpoints() {
     breakpoints_.clear();
-    if (uc_)
-        rebuildBreakpointHooks();
 }
 
 bool CpuEngine::hasBreakpoint(uint32_t addr) const {
@@ -241,15 +239,35 @@ CpuEngine::StopReason CpuEngine::run(uint64_t maxInsns) {
         return StopReason::Fault;
     lastStop_ = StopReason::Quantum;
     lastError_.clear();
+    faultKind_ = FaultKind::None;
+    runLimit_ = maxInsns;
+    runExecuted_ = 0;
     const uint32_t pcNow = pc();
-    if (hasBreakpoint(pcNow))
-        skipNextBreakpoint_ = true;
+    skipNextBreakpoint_ = hasBreakpoint(pcNow);
     const uint64_t start = static_cast<uint64_t>(pcNow) | 1ull;
-    const uc_err err = uc_emu_start(uc_, start, 0, 0, maxInsns);
-    insnCount_ += maxInsns;
+    // count = 0: the code hook above enforces maxInsns and keeps the exact count.
+    const uc_err err = uc_emu_start(uc_, start, 0, 0, 0);
+    insnCount_ += runExecuted_;
     if (err != UC_ERR_OK && lastStop_ != StopReason::Breakpoint && lastStop_ != StopReason::InterruptHook) {
         lastStop_ = StopReason::Fault;
-        lastError_ = uc_strerror(err);
+        if (faultKind_ == FaultKind::None) {
+            switch (err) {
+            case UC_ERR_INSN_INVALID:
+                faultKind_ = FaultKind::InvalidInsn;
+                break;
+            case UC_ERR_READ_UNALIGNED:
+            case UC_ERR_WRITE_UNALIGNED:
+            case UC_ERR_FETCH_UNALIGNED:
+                faultKind_ = FaultKind::Unaligned;
+                break;
+            default:
+                faultKind_ = FaultKind::Other;
+                break;
+            }
+            faultAddress_ = pc();
+        }
+        if (lastError_.empty())
+            lastError_ = uc_strerror(err);
         if (onFault_)
             onFault_(lastError_, pc());
     }

@@ -84,6 +84,17 @@ uint32_t Timer::read32(uint32_t addr) {
     }
 }
 
+uint32_t Timer::partialWriteBase(uint32_t addr) {
+    switch (addr - base_) {
+    case 0x10:
+        return ~0u; // SR is rc_w0
+    case 0x14:
+        return 0; // EGR is write-only trigger
+    default:
+        return read32(addr);
+    }
+}
+
 void Timer::write32(uint32_t addr, uint32_t value) {
     switch (addr - base_) {
     case 0x00:
@@ -99,7 +110,7 @@ void Timer::write32(uint32_t addr, uint32_t value) {
         dier_ = value;
         break;
     case 0x10:
-        sr_ &= ~value;
+        sr_ &= value; // rc_w0: TIMx->SR = ~TIM_SR_UIF clears only UIF
         break;
     case 0x14:
         if (value & 1u) {
@@ -219,10 +230,21 @@ uint32_t Adc::read32(uint32_t addr) {
     }
 }
 
+uint32_t Adc::partialWriteBase(uint32_t addr) {
+    switch (addr - mcu::kAdc1Base) {
+    case 0x00:
+        return ~0u; // SR is rc_w0
+    case 0x4C:
+        return dr_; // reading DR clears EOC
+    default:
+        return read32(addr);
+    }
+}
+
 void Adc::write32(uint32_t addr, uint32_t value) {
     switch (addr - mcu::kAdc1Base) {
     case 0x00:
-        sr_ &= ~value;
+        sr_ &= value; // rc_w0: writing 0 clears
         break;
     case 0x04:
         cr1_ = value;
@@ -293,6 +315,12 @@ uint32_t Spi::read32(uint32_t addr) {
     }
 }
 
+uint32_t Spi::partialWriteBase(uint32_t addr) {
+    if (addr - base_ == 0x0C)
+        return dr_; // reading DR clears RXNE
+    return read32(addr);
+}
+
 void Spi::write32(uint32_t addr, uint32_t value) {
     switch (addr - base_) {
     case 0x00:
@@ -357,6 +385,12 @@ uint32_t I2c::read32(uint32_t addr) {
     default:
         return 0;
     }
+}
+
+uint32_t I2c::partialWriteBase(uint32_t addr) {
+    if (addr - base_ == 0x10)
+        return dr_; // reading DR clears RXNE
+    return read32(addr);
 }
 
 void I2c::write32(uint32_t addr, uint32_t value) {

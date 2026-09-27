@@ -33,6 +33,11 @@ void Nvic::reset() {
     scr_ = 0;
     ccr_ = 0x00000200u;
     cpacr_ = 0;
+    shcsr_ = 0;
+    cfsr_ = 0;
+    hfsr_ = 0;
+    mmfar_ = 0;
+    bfar_ = 0;
     currentException_ = 0;
     systickPending_ = 0;
     pendsvPending_ = 0;
@@ -233,6 +238,56 @@ void Nvic::exitException(CpuEngine &cpu, uint32_t excReturn) {
     }
 }
 
+int Nvic::raiseFault(CpuEngine &cpu, FaultType type, uint32_t address) {
+    int exc = 3; // HardFault
+    uint32_t enableBit = 0;
+    switch (type) {
+    case FaultType::BusData:
+        cfsr_ |= (1u << 9) | (1u << 15); // PRECISERR | BFARVALID
+        bfar_ = address;
+        exc = 5;
+        enableBit = 1u << 17; // BUSFAULTENA
+        break;
+    case FaultType::BusFetch:
+        cfsr_ |= 1u << 8; // IBUSERR
+        exc = 5;
+        enableBit = 1u << 17;
+        break;
+    case FaultType::UndefInstr:
+        cfsr_ |= 1u << 16; // UNDEFINSTR
+        exc = 6;
+        enableBit = 1u << 18; // USGFAULTENA
+        break;
+    case FaultType::Unaligned:
+        cfsr_ |= 1u << 24; // UNALIGNED
+        exc = 6;
+        enableBit = 1u << 18;
+        break;
+    case FaultType::Other:
+        break;
+    }
+
+    const int curPri = currentException_ ? priorityOf(currentException_) : 256;
+    if (exc != 3) {
+        // Configurable fault that is disabled, masked or not higher priority than the
+        // current context escalates to HardFault.
+        if (!(shcsr_ & enableBit) || cpu.primask() != 0 || priorityOf(exc) >= curPri)
+            exc = 3;
+    }
+    if (exc == 3) {
+        if (currentException_ == 2 || currentException_ == 3)
+            return 0; // fault in HardFault/NMI: lockup
+        if (type != FaultType::Other)
+            hfsr_ |= 1u << 30; // FORCED
+    }
+
+    const uint32_t handler = vectorAddress(exc);
+    if (handler == 0 || handler == 0xFFFFFFFFu)
+        return 0;
+    enterException(cpu, exc);
+    return exc;
+}
+
 void Nvic::service(CpuEngine &cpu) {
     if (cpu.primask() != 0)
         return;
@@ -276,6 +331,16 @@ uint32_t Nvic::read32(uint32_t addr) {
         return ccr_;
     if (addr == 0xE000ED88u)
         return cpacr_;
+    if (addr == 0xE000ED24u)
+        return shcsr_;
+    if (addr == 0xE000ED28u)
+        return cfsr_;
+    if (addr == 0xE000ED2Cu)
+        return hfsr_;
+    if (addr == 0xE000ED34u)
+        return mmfar_;
+    if (addr == 0xE000ED38u)
+        return bfar_;
     if (addr >= 0xE000ED18u && addr < 0xE000ED24u) {
         const uint32_t off = addr - 0xE000ED18u;
         uint32_t w = 0;
@@ -301,6 +366,16 @@ uint32_t Nvic::read32(uint32_t addr) {
         return w;
     }
     return 0;
+}
+
+uint32_t Nvic::partialWriteBase(uint32_t addr) {
+    // Set/clear-enable and set/clear-pending are write-1 registers, ICSR has trigger bits,
+    // CFSR/HFSR are rc_w1: untouched bytes must be 0 so they have no effect.
+    if (addr == 0xE000ED04u || addr == 0xE000ED28u || addr == 0xE000ED2Cu)
+        return 0;
+    if (addr >= 0xE000E100u && addr < 0xE000E2A0u)
+        return 0;
+    return read32(addr);
 }
 
 void Nvic::write32(uint32_t addr, uint32_t value) {
@@ -338,6 +413,26 @@ void Nvic::write32(uint32_t addr, uint32_t value) {
     }
     if (addr == 0xE000ED88u) {
         cpacr_ = value;
+        return;
+    }
+    if (addr == 0xE000ED24u) {
+        shcsr_ = value & 0x0007FFFFu;
+        return;
+    }
+    if (addr == 0xE000ED28u) {
+        cfsr_ &= ~value; // rc_w1
+        return;
+    }
+    if (addr == 0xE000ED2Cu) {
+        hfsr_ &= ~value; // rc_w1
+        return;
+    }
+    if (addr == 0xE000ED34u) {
+        mmfar_ = value;
+        return;
+    }
+    if (addr == 0xE000ED38u) {
+        bfar_ = value;
         return;
     }
     if (addr >= 0xE000ED18u && addr < 0xE000ED24u) {

@@ -17,6 +17,7 @@ public:
 
     uint32_t read32(uint32_t addr) override;
     void write32(uint32_t addr, uint32_t value) override;
+    uint32_t partialWriteBase(uint32_t addr) override;
     void tick(uint32_t cycles, uint32_t sysclk) override;
     void reset() override;
 

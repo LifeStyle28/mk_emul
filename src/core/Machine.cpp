@@ -179,15 +179,59 @@ void Machine::setUartTx(UartTx cb) {
     usart6_.setTxCallback(uartTx_);
 }
 
+void Machine::tickPeripherals(uint32_t insns) {
+    systick_.tick(insns, rcc_.sysclk());
+    tim2_.tick(insns, rcc_.sysclk());
+    tim3_.tick(insns, rcc_.sysclk());
+}
+
+void Machine::deliverFault() {
+    Nvic::FaultType type = Nvic::FaultType::Other;
+    switch (cpu_.faultKind()) {
+    case CpuEngine::FaultKind::ReadUnmapped:
+    case CpuEngine::FaultKind::WriteUnmapped:
+        type = Nvic::FaultType::BusData;
+        break;
+    case CpuEngine::FaultKind::FetchUnmapped:
+        type = Nvic::FaultType::BusFetch;
+        break;
+    case CpuEngine::FaultKind::InvalidInsn:
+        type = Nvic::FaultType::UndefInstr;
+        break;
+    case CpuEngine::FaultKind::Unaligned:
+        type = Nvic::FaultType::Unaligned;
+        break;
+    default:
+        break;
+    }
+    const std::string reason = cpu_.lastError();
+    const int exc = nvic_.raiseFault(cpu_, type, cpu_.faultAddress());
+    // Like a debugger's vector catch: stop at the first handler instruction, Run continues.
+    switch (exc) {
+    case 3:
+        status_ = "HardFault: " + reason;
+        break;
+    case 5:
+        status_ = "BusFault: " + reason;
+        break;
+    case 6:
+        status_ = "UsageFault: " + reason;
+        break;
+    default:
+        status_ = "Lockup: " + reason;
+        break;
+    }
+}
+
 CpuEngine::StopReason Machine::step() {
     auto r = cpu_.run(1);
-    systick_.tick(1, rcc_.sysclk());
-    tim2_.tick(1, rcc_.sysclk());
-    tim3_.tick(1, rcc_.sysclk());
+    tickPeripherals(static_cast<uint32_t>(cpu_.lastRunCount()));
+    if (r == CpuEngine::StopReason::Fault) {
+        deliverFault();
+        return r;
+    }
     nvic_.service(cpu_);
-    if (r == CpuEngine::StopReason::Fault)
-        status_ = cpu_.lastError();
-    else if (r == CpuEngine::StopReason::Breakpoint)
+    if (r == CpuEngine::StopReason::Breakpoint)
         status_ = "Breakpoint";
     else
         status_ = "Paused";
@@ -201,17 +245,17 @@ CpuEngine::StopReason Machine::runQuantum(uint32_t insns) {
     while (left > 0) {
         const uint32_t n = left > kChunk ? kChunk : left;
         last = cpu_.run(n);
-        systick_.tick(n, rcc_.sysclk());
-        tim2_.tick(n, rcc_.sysclk());
-        tim3_.tick(n, rcc_.sysclk());
+        tickPeripherals(static_cast<uint32_t>(cpu_.lastRunCount()));
+        if (last == CpuEngine::StopReason::Fault) {
+            deliverFault();
+            return last;
+        }
         nvic_.service(cpu_);
-        if (last == CpuEngine::StopReason::Breakpoint || last == CpuEngine::StopReason::Fault)
+        if (last == CpuEngine::StopReason::Breakpoint)
             break;
         left -= n;
     }
-    if (last == CpuEngine::StopReason::Fault)
-        status_ = cpu_.lastError();
-    else if (last == CpuEngine::StopReason::Breakpoint)
+    if (last == CpuEngine::StopReason::Breakpoint)
         status_ = "Breakpoint";
     else
         status_ = "Running";
@@ -243,6 +287,9 @@ MachineSnapshot Machine::snapshot() const {
     s.tim2Cnt = tim2_.cnt();
     s.adcDr = adc1_.dr();
     s.vtor = nvic_.vtor();
+    s.cfsr = nvic_.cfsr();
+    s.hfsr = nvic_.hfsr();
+    s.bfar = nvic_.bfar();
     s.instructions = cpu_.instructionCount();
     s.haltReason = status_;
     s.stop = cpu_.lastStop();

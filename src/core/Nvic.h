@@ -18,6 +18,7 @@ public:
 
     uint32_t read32(uint32_t addr) override;
     void write32(uint32_t addr, uint32_t value) override;
+    uint32_t partialWriteBase(uint32_t addr) override;
     void reset() override;
 
     void setPending(int irqNumber, bool pending) override;
@@ -26,6 +27,16 @@ public:
     void service(CpuEngine &cpu);
     void enterException(CpuEngine &cpu, int exceptionNumber);
     void exitException(CpuEngine &cpu, uint32_t excReturn);
+
+    enum class FaultType { BusData, BusFetch, UndefInstr, Unaligned, Other };
+    // Enters BusFault/UsageFault (if enabled in SHCSR and allowed by priority) or escalates
+    // to HardFault, filling CFSR/HFSR/BFAR. Returns the exception number entered,
+    // or 0 on lockup (fault inside HardFault/NMI, or no handler in the vector table).
+    int raiseFault(CpuEngine &cpu, FaultType type, uint32_t address);
+
+    uint32_t cfsr() const { return cfsr_; }
+    uint32_t hfsr() const { return hfsr_; }
+    uint32_t bfar() const { return bfar_; }
 
     uint32_t vtor() const { return vtor_; }
     int currentException() const { return currentException_; }
@@ -54,6 +65,11 @@ private:
     uint32_t scr_ = 0;
     uint32_t ccr_ = 0x00000200u;
     uint32_t cpacr_ = 0;
+    uint32_t shcsr_ = 0;
+    uint32_t cfsr_ = 0;
+    uint32_t hfsr_ = 0;
+    uint32_t mmfar_ = 0;
+    uint32_t bfar_ = 0;
     uint32_t cpuId_ = 0x410FC241u; // Cortex-M4 r0p1
     int currentException_ = 0;
     uint32_t systickPending_ : 1;

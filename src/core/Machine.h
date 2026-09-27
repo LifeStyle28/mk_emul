@@ -42,6 +42,9 @@ struct MachineSnapshot {
     uint32_t tim2Cnt = 0;
     uint32_t adcDr = 0;
     uint32_t vtor = 0;
+    uint32_t cfsr = 0;
+    uint32_t hfsr = 0;
+    uint32_t bfar = 0;
     uint64_t instructions = 0;
     std::string haltReason;
     CpuEngine::StopReason stop = CpuEngine::StopReason::None;
@@ -88,6 +91,8 @@ private:
     void wirePeripherals();
     void onGpioPin(int port, uint16_t odr, uint16_t idr);
     void applyResetCpu();
+    void tickPeripherals(uint32_t insns);
+    void deliverFault();
 
     CpuEngine cpu_;
     MmioBus bus_;

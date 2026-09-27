@@ -210,6 +210,9 @@ void EmulatorController::applySnapshot(const MachineSnapshot &snap, const QByteA
     per.push_back({"TIM2_CNT", hex(snap.tim2Cnt)});
     per.push_back({"ADC1_DR", hex(snap.adcDr)});
     per.push_back({"VTOR", hex(snap.vtor)});
+    per.push_back({"SCB_CFSR", hex(snap.cfsr)});
+    per.push_back({"SCB_HFSR", hex(snap.hfsr)});
+    per.push_back({"SCB_BFAR", hex(snap.bfar)});
     per.push_back({"INSNS", QString::number(snap.instructions)});
     periph_.update(per);
 

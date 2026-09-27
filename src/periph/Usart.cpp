@@ -74,10 +74,21 @@ uint32_t Usart::read32(uint32_t addr) {
     }
 }
 
+uint32_t Usart::partialWriteBase(uint32_t addr) {
+    switch (addr - base_) {
+    case 0x00:
+        return ~0u; // rc_w0: untouched bytes must not clear flags
+    case 0x04:
+        return dr_; // no RX FIFO pop
+    default:
+        return read32(addr);
+    }
+}
+
 void Usart::write32(uint32_t addr, uint32_t value) {
     switch (addr - base_) {
     case 0x00:
-        sr_ &= ~(value & 0x360u); // clearable bits
+        sr_ &= value | ~0x360u; // CTS/LBD/TC/RXNE are rc_w0: writing 0 clears
         break;
     case 0x04:
         dr_ = value & 0x1FFu;

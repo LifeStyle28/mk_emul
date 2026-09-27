@@ -34,6 +34,12 @@ uint32_t SysTickTimer::read32(uint32_t addr) {
     }
 }
 
+uint32_t SysTickTimer::partialWriteBase(uint32_t addr) {
+    if (addr - 0xE000E010u == 0x00)
+        return ctrl_; // reading CTRL clears COUNTFLAG
+    return read32(addr);
+}
+
 void SysTickTimer::write32(uint32_t addr, uint32_t value) {
     switch (addr - 0xE000E010u) {
     case 0x00:
@@ -44,6 +50,7 @@ void SysTickTimer::write32(uint32_t addr, uint32_t value) {
         break;
     case 0x08:
         val_ = 0;
+        ctrl_ &= ~(1u << 16); // any write to VAL also clears COUNTFLAG
         break;
     default:
         break;
