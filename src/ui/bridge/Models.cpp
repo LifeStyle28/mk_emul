@@ -325,12 +325,18 @@ void ProjectModel::collectFiles(const QString &dir, const QString &root, QString
     if (out->size() > 200)
         return;
     QDir d(dir);
-    // Drivers/: the HAL + CMSIS copy of a CubeMX project (the emulator brings its own, see
-    // ArmGccBuilder); Debug/, Release/: STM32CubeIDE build output.
     const auto skip = QStringList{"build", "project_build", ".git", "cmake-build", "third_party", "node_modules",
-                                  "_deps", ".vs", "Drivers", "Debug", "Release"};
+                                  "_deps", ".vs"};
     for (const auto &sub : d.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
         if (skip.contains(sub, Qt::CaseInsensitive))
+            continue;
+        const QDir sd(d.filePath(sub));
+        // Drivers/ of a CubeMX project: its HAL + CMSIS copy (the emulator brings its own, see
+        // ArmGccBuilder). Debug/, Release/ of STM32CubeIDE: build output. A student's own
+        // "drivers" or "debug" folder with sources is kept.
+        if (sub == "Drivers" && (sd.exists("STM32F4xx_HAL_Driver") || sd.exists("CMSIS")))
+            continue;
+        if ((sub == "Debug" || sub == "Release") && (sd.exists("makefile") || sd.exists("objects.list")))
             continue;
         collectFiles(d.filePath(sub), root, out);
     }
