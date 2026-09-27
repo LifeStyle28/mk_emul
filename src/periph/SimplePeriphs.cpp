@@ -29,7 +29,7 @@ void Timer::reset() {
     ccer_ = 0;
     cnt_ = 0;
     psc_ = 0;
-    arr_ = 0xFFFFFFFFu;
+    arr_ = counterMask();
     ccr1_ = 0;
     ccr2_ = 0;
     ccr3_ = 0;
@@ -43,7 +43,7 @@ void Timer::updateIrq() {
 
 uint32_t Timer::timerClock(uint32_t sysclk) const {
     (void)sysclk;
-    if (timIndex_ == 2 || timIndex_ == 3)
+    if (timIndex_ >= 2 && timIndex_ <= 5) // APB1
         return rcc_ ? rcc_->timclk1() : 16000000u;
     return rcc_ ? rcc_->timclk2() : 16000000u;
 }
@@ -129,25 +129,25 @@ void Timer::write32(uint32_t addr, uint32_t value) {
         ccer_ = value;
         break;
     case 0x24:
-        cnt_ = value;
+        cnt_ = value & counterMask();
         break;
     case 0x28:
         psc_ = value;
         break;
     case 0x2C:
-        arr_ = value;
+        arr_ = value & counterMask();
         break;
     case 0x34:
-        ccr1_ = value;
+        ccr1_ = value & counterMask();
         break;
     case 0x38:
-        ccr2_ = value;
+        ccr2_ = value & counterMask();
         break;
     case 0x3C:
-        ccr3_ = value;
+        ccr3_ = value & counterMask();
         break;
     case 0x40:
-        ccr4_ = value;
+        ccr4_ = value & counterMask();
         break;
     default:
         break;
@@ -184,16 +184,59 @@ void Timer::tick(uint32_t cycles, uint32_t sysclk) {
     frac_ += static_cast<uint64_t>(cycles) * tclk;
     uint32_t steps = static_cast<uint32_t>(frac_ / (static_cast<uint64_t>(hclk) * div));
     frac_ %= static_cast<uint64_t>(hclk) * div;
+    if (steps == 0)
+        return;
+    // Same as stepping one by one: a step taken while CNT >= top wraps to 0 and sets UIF.
     const uint32_t top = arr_ ? arr_ : 0xFFFFu;
-    while (steps--) {
-        if (cnt_ >= top) {
-            cnt_ = 0;
-            sr_ |= 1u;
-            updateIrq();
-        } else {
-            ++cnt_;
-        }
+    uint64_t left = steps;
+    if (left > static_cast<uint64_t>(top) - std::min(cnt_, top)) {
+        left -= cnt_ >= top ? 1 : static_cast<uint64_t>(top - cnt_) + 1;
+        cnt_ = static_cast<uint32_t>(left % (static_cast<uint64_t>(top) + 1));
+        sr_ |= 1u;
+        updateIrq();
+    } else {
+        cnt_ += static_cast<uint32_t>(left);
     }
+}
+
+double Timer::outputLevel(int ch) const {
+    if (ch < 1 || ch > 4)
+        return -1.0;
+    const int i = ch - 1;
+    if ((ccer_ & (1u << (4 * i))) == 0) // CCxE
+        return -1.0;
+    const uint32_t ccmr = i < 2 ? ccmr1_ : ccmr2_;
+    const unsigned shift = (i & 1) ? 8u : 0u;
+    if (((ccmr >> shift) & 3u) != 0) // CCxS: channel configured as input
+        return -1.0;
+    const uint32_t ccr = i == 0 ? ccr1_ : i == 1 ? ccr2_ : i == 2 ? ccr3_ : ccr4_;
+    const uint32_t mode = (ccmr >> (shift + 4)) & 7u; // OCxM
+    double active; // fraction of the period with OCxREF high
+    const double period = static_cast<double>(arr_) + 1.0;
+    const bool running = (cr1_ & 1u) != 0 && (!rcc_ || rcc_->timEnabled(timIndex_));
+    switch (mode) {
+    case 4: // force inactive
+        active = 0.0;
+        break;
+    case 5: // force active
+        active = 1.0;
+        break;
+    case 6: // PWM mode 1: active while CNT < CCR
+    case 7: // PWM mode 2: inactive while CNT < CCR
+        if (running)
+            active = std::min(static_cast<double>(ccr), period) / period;
+        else
+            active = cnt_ < ccr ? 1.0 : 0.0; // stopped counter: the output holds its level
+        if (mode == 7)
+            active = 1.0 - active;
+        break;
+    default: // frozen / match modes: not modelled, output stays low
+        active = 0.0;
+        break;
+    }
+    if (ccer_ & (1u << (4 * i + 1))) // CCxP: active low
+        active = 1.0 - active;
+    return active;
 }
 
 Adc::Adc(Rcc *rcc, IrqTarget *nvic)

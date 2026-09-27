@@ -101,6 +101,50 @@ TEST_F(TimerFixture, CountsWithPrescalerAndOverflows) {
     EXPECT_TRUE(sr() & 1u) << "update event on overflow";
 }
 
+// tick() jumps over many periods at once; the result must match counting one by one.
+TEST_F(TimerFixture, LongTickWrapsLikeSingleSteps) {
+    w(0x2C, 9); // ARR
+    w(0x00, 1); // CEN
+    tim.tick(3, 16000000u);
+    tim.tick(1234, 16000000u); // 3 + 1234 = 1237 = 123 periods + 7
+    EXPECT_EQ(tim.cnt(), 7u);
+    EXPECT_TRUE(sr() & 1u);
+    w(0x10, 0);
+    w(0x24, 20); // CNT above ARR: the next step wraps to 0
+    tim.tick(4, 16000000u);
+    EXPECT_EQ(tim.cnt(), 3u);
+    EXPECT_TRUE(sr() & 1u);
+}
+
+TEST(Timer, SixteenBitTimersMaskCounterRegisters) {
+    FakeIrq irq;
+    Timer tim4{"TIM4", mcu::kTim4Base, mcu::kIrqTim4, 4, nullptr, &irq};
+    EXPECT_EQ(tim4.arr(), 0xFFFFu) << "reset value of a 16-bit ARR";
+    tim4.write32(mcu::kTim4Base + 0x2C, 0x12345678u);
+    EXPECT_EQ(tim4.arr(), 0x5678u);
+    Timer tim5{"TIM5", mcu::kTim5Base, mcu::kIrqTim5, 5, nullptr, &irq};
+    EXPECT_EQ(tim5.arr(), 0xFFFFFFFFu);
+}
+
+TEST_F(TimerFixture, PwmOutputLevel) {
+    EXPECT_LT(tim.outputLevel(1), 0) << "CC1E off: not an output";
+    w(0x2C, 999);                       // ARR: period 1000
+    w(0x18, (6u << 4) | (7u << 12));    // CCMR1: CH1 PWM mode 1, CH2 PWM mode 2
+    w(0x1C, (4u << 4) | (5u << 12));    // CCMR2: CH3 forced inactive, CH4 forced active
+    w(0x20, 0x1111u | (1u << 13));      // CCER: CC1E-CC4E, CC4P (active low)
+    w(0x34, 250);                       // CCR1
+    w(0x38, 250);                       // CCR2
+    w(0x00, 1);                         // CEN
+    EXPECT_DOUBLE_EQ(tim.outputLevel(1), 0.25);
+    EXPECT_DOUBLE_EQ(tim.outputLevel(2), 0.75);
+    EXPECT_DOUBLE_EQ(tim.outputLevel(3), 0.0);
+    EXPECT_DOUBLE_EQ(tim.outputLevel(4), 0.0) << "forced active, inverted by CC4P";
+    w(0x34, 5000);                      // CCR above ARR: always active
+    EXPECT_DOUBLE_EQ(tim.outputLevel(1), 1.0);
+    w(0x18, (6u << 4) | 1u);            // CC1S = 01: channel 1 is an input
+    EXPECT_LT(tim.outputLevel(1), 0);
+}
+
 TEST(Exti, ByteWriteToPrClearsOnlyThatByte) {
     FakeIrq irq;
     Exti exti(&irq);

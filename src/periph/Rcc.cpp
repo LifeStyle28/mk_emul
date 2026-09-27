@@ -102,8 +102,8 @@ bool Rcc::usartEnabled(int index) const {
 bool Rcc::timEnabled(int index) const {
     if (index == 2)
         return (apb1enr_ & (1u << 0)) != 0;
-    if (index == 3)
-        return (apb1enr_ & (1u << 1)) != 0;
+    if (index >= 3 && index <= 5)
+        return (apb1enr_ & (1u << (index - 2))) != 0;
     return false;
 }
 

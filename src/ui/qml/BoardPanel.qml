@@ -81,6 +81,8 @@ PanelCard {
                                 property bool ledOn: index === 0 ? boardModel.led0
                                                      : index === 1 ? boardModel.led1
                                                      : index === 2 ? boardModel.led2 : boardModel.led3
+                                // PWM (TIM4 on PD12-15): brightness follows the duty cycle
+                                property real ledLevel: boardModel.ledLevels[index]
                                 property color ledColor: index === 0 ? "#58d68d"
                                                         : index === 1 ? "#f5b041"
                                                         : index === 2 ? "#e74c3c" : "#5dade2"
@@ -92,20 +94,28 @@ PanelCard {
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     Rectangle {
                                         anchors.centerIn: parent
-                                        width: ledOn ? 28 : 18
+                                        width: ledOn ? 18 + 10 * ledLevel : 18
                                         height: width
                                         radius: width / 2
                                         color: ledOn ? ledColor : "transparent"
-                                        opacity: 0.28
+                                        opacity: 0.28 * ledLevel
                                     }
                                     Rectangle {
                                         anchors.centerIn: parent
                                         width: 16
                                         height: 16
                                         radius: 8
-                                        color: ledOn ? ledColor : "#1a1a1a"
+                                        color: "#1a1a1a"
                                         border.color: ledOn ? "#fff6" : "#666"
                                         border.width: 1
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            anchors.margins: 1 // keep the border visible
+                                            radius: width / 2
+                                            color: ledColor
+                                            // dim PWM levels stay visible: perceived brightness ~ sqrt(duty)
+                                            opacity: ledOn ? Math.sqrt(ledLevel) : 0
+                                        }
                                     }
                                 }
                                 Text {

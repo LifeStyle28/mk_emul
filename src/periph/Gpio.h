@@ -26,6 +26,9 @@ public:
     uint16_t odr() const { return odr_; }
     uint16_t idr() const { return idr_; }
     uint32_t moder() const { return moder_; }
+    // Pin mode (MODER: 0 input, 1 output, 2 alternate function, 3 analog) and AF number.
+    unsigned pinMode(int pin) const { return (moder_ >> (2 * pin)) & 3u; }
+    unsigned pinAf(int pin) const { return ((pin < 8 ? afrl_ : afrh_) >> (4 * (pin & 7))) & 0xFu; }
 
     void setExternalInput(int pin, bool high);
     void setPinChanged(PinChanged cb) { onPin_ = std::move(cb); }

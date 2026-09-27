@@ -481,6 +481,26 @@ float-цикла (проверка FPU-контекста задач и lazy sta
 Тесты: `FreeRtosFirmwareTest.TasksQueueAndFpuContext`, `FreeRtosFirmwareTest.ButtonGivesSemaphoreFromIsr`
 (пропускаются, если ядро не скачано). Итого 86 тестов.
 
+## TIM4/TIM5 и ШИМ: яркость светодиодов
+
+Классическое упражнение на Discovery: светодиоды PD12–PD15 подключены к TIM4 CH1–CH4
+(альтернативная функция AF2). Раньше TIM4 не было, запись в него терялась.
+- **TIM4 и TIM5** (тот же класс `Timer`, что у TIM2/TIM3). Разрядность как на МК: TIM2/TIM5
+  32 бита, TIM3/TIM4 16 бит (CNT/ARR/CCR маскируются, ARR после сброса 0xFFFF).
+- **Выход ШИМ:** `Timer::outputLevel(ch)` — доля периода с активным выходом по CCMRx.OCxM
+  (PWM mode 1/2, forced active/inactive), CCER.CCxE и полярности CCxP.
+- **Плата:** если пин PD12–15 в режиме AF (MODER = 10) с AF2, светодиод показывает скважность
+  TIM4, а не ODR. `MachineSnapshot::ledLevel[4]` (0..1), в UI яркость ~ √скважности, чтобы
+  малые значения оставались заметны. Проверено в окне: 25/50/100% и «дыхание» зелёного.
+- **Таймер тикает за O(1):** `Timer::tick` раньше шагал по одному отсчёту в цикле (при PSC = 0
+  это цикл на каждый такт процессора); теперь CNT и UIF считаются сразу, результат тот же.
+- Заголовок `stm32f407xx.h`: TIM4/TIM5, `TIM4_IRQn`/`TIM5_IRQn`, `RCC_APB1ENR_TIM3EN..TIM5EN`,
+  биты `TIM_CR1_*`, `TIM_CCMRx_OCxM_*`, `TIM_CCER_CCxE` с именами как в CMSIS.
+
+Тесты: `FirmwareTest.Tim4PwmSetsLedBrightness`, `TimerFixture.PwmOutputLevel`,
+`TimerFixture.LongTickWrapsLikeSingleSteps`, `Timer.SixteenBitTimersMaskCounterRegisters`.
+Итого 90 тестов.
+
 ## Известные ограничения (кандидаты на доработку)
 
 - Непривилегированный код может обращаться к NVIC/SCB и периферии; на настоящем МК обращение к

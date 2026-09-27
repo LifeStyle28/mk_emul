@@ -26,6 +26,8 @@ constexpr uint32_t kPeriphBitbandSize = kApbAhbSize * 32u;
 
 constexpr uint32_t kTim2Base = 0x40000000u;
 constexpr uint32_t kTim3Base = 0x40000400u;
+constexpr uint32_t kTim4Base = 0x40000800u;
+constexpr uint32_t kTim5Base = 0x40000C00u;
 constexpr uint32_t kWwdgBase = 0x40002C00u;
 constexpr uint32_t kIwdgBase = 0x40003000u;
 constexpr uint32_t kUsart2Base = 0x40004400u;
@@ -70,6 +72,7 @@ constexpr int kIrqAdc = 18;
 constexpr int kIrqExti9_5 = 23;
 constexpr int kIrqTim2 = 28;
 constexpr int kIrqTim3 = 29;
+constexpr int kIrqTim4 = 30;
 constexpr int kIrqI2c1Ev = 31;
 constexpr int kIrqI2c1Er = 32;
 constexpr int kIrqSpi1 = 35;
@@ -77,6 +80,7 @@ constexpr int kIrqUsart1 = 37;
 constexpr int kIrqUsart2 = 38;
 constexpr int kIrqUsart3 = 39;
 constexpr int kIrqExti15_10 = 40;
+constexpr int kIrqTim5 = 50;
 constexpr int kIrqUsart6 = 71;
 
 constexpr int kDiscoveryLedPort = 3; // GPIOD

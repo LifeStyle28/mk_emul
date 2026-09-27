@@ -7,6 +7,7 @@
 #include <QString>
 #include <QTimer>
 #include <QUrl>
+#include <QVariantList>
 #include <QVector>
 
 class RegisterModel : public QAbstractListModel {
@@ -95,6 +96,8 @@ class BoardModel : public QObject {
     Q_PROPERTY(bool led1 READ led1 NOTIFY ledsChanged)
     Q_PROPERTY(bool led2 READ led2 NOTIFY ledsChanged)
     Q_PROPERTY(bool led3 READ led3 NOTIFY ledsChanged)
+    // Brightness 0..1 of each LED (PWM duty when driven by TIM4).
+    Q_PROPERTY(QVariantList ledLevels READ ledLevels NOTIFY ledsChanged)
     Q_PROPERTY(bool button READ button WRITE setButton NOTIFY buttonChanged)
     Q_PROPERTY(int analog READ analog WRITE setAnalog NOTIFY analogChanged)
 public:
@@ -104,10 +107,11 @@ public:
     bool led1() const { return leds_ & 2; }
     bool led2() const { return leds_ & 4; }
     bool led3() const { return leds_ & 8; }
+    QVariantList ledLevels() const;
     bool button() const { return button_; }
     int analog() const { return analog_; }
 
-    void setLeds(quint32 mask);
+    void setLeds(quint32 mask, const float levels[4]);
     void setButton(bool pressed);
     void setAnalog(int value);
 
@@ -120,6 +124,7 @@ signals:
 
 private:
     quint32 leds_ = 0;
+    float levels_[4]{};
     bool button_ = false;
     int analog_ = 2048;
 };

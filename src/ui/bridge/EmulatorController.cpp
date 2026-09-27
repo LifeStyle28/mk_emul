@@ -261,7 +261,7 @@ void EmulatorController::applySnapshot(const MachineSnapshot &snap, const QByteA
     per.push_back({"INSNS", QString::number(snap.instructions)});
     periph_.update(per);
 
-    board_.setLeds(snap.leds);
+    board_.setLeds(snap.leds, snap.ledLevel);
     uart_.appendBytes(uart);
     pcText_ = hex(snap.pc);
     status_ = QString::fromStdString(snap.haltReason);

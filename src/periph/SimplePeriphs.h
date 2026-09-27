@@ -28,10 +28,15 @@ public:
     uint32_t psc() const { return psc_; }
     uint32_t cr1() const { return cr1_; }
     uint32_t ccr1() const { return ccr1_; }
+    // Mean level of output channel ch (1..4) over a PWM period: 0..1, or -1 if the channel is
+    // not an enabled output-compare output. PWM mode 1/2, forced levels, CCxP polarity.
+    double outputLevel(int ch) const;
 
 private:
     void updateIrq();
     uint32_t timerClock(uint32_t sysclk) const;
+    // TIM2 and TIM5 have 32-bit counters, the others 16-bit.
+    uint32_t counterMask() const { return timIndex_ == 2 || timIndex_ == 5 ? 0xFFFFFFFFu : 0xFFFFu; }
 
     const char *name_;
     uint32_t base_;

@@ -10,6 +10,8 @@
 #include <QTimer>
 #include <QUrl>
 
+#include <cmath>
+
 RegisterModel::RegisterModel(QObject *parent)
     : QAbstractListModel(parent) {}
 
@@ -166,11 +168,24 @@ void PeriphModel::update(const QVector<QPair<QString, QString>> &rows) {
 BoardModel::BoardModel(QObject *parent)
     : QObject(parent) {}
 
-void BoardModel::setLeds(quint32 mask) {
-    if (leds_ == mask)
-        return;
+void BoardModel::setLeds(quint32 mask, const float levels[4]) {
+    // Duty cycles are shown with 1% steps, so tiny changes do not re-render the board.
+    bool changed = leds_ != mask;
+    for (int i = 0; i < 4; ++i) {
+        const float level = std::round(levels[i] * 100.0f) / 100.0f;
+        changed = changed || level != levels_[i];
+        levels_[i] = level;
+    }
     leds_ = mask;
-    emit ledsChanged();
+    if (changed)
+        emit ledsChanged();
+}
+
+QVariantList BoardModel::ledLevels() const {
+    QVariantList out;
+    for (float level : levels_)
+        out.push_back(static_cast<double>(level));
+    return out;
 }
 
 void BoardModel::setButton(bool pressed) {

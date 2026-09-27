@@ -28,7 +28,8 @@ struct MachineSnapshot {
     uint32_t pc = 0;
     uint32_t sp = 0;
     uint32_t lr = 0;
-    uint32_t leds = 0;
+    uint32_t leds = 0;     // bit i: LED i (PD12+i) lit at all
+    float ledLevel[4]{};   // brightness 0..1: ODR bit, or PWM duty when the pin is TIM4 CHx (AF2)
     bool button = false;
     uint32_t gpioD = 0;
     uint32_t rccCr = 0;
@@ -122,6 +123,8 @@ private:
     Usart usart6_;
     Timer tim2_;
     Timer tim3_;
+    Timer tim4_;
+    Timer tim5_;
     Adc adc1_;
     Spi spi1_;
     I2c i2c1_;

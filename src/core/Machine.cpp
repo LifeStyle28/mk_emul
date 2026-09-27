@@ -19,6 +19,8 @@ Machine::Machine()
     , usart6_("USART6", mcu::kUsart6Base, mcu::kIrqUsart6, &rcc_, &nvic_, 6)
     , tim2_("TIM2", mcu::kTim2Base, mcu::kIrqTim2, 2, &rcc_, &nvic_)
     , tim3_("TIM3", mcu::kTim3Base, mcu::kIrqTim3, 3, &rcc_, &nvic_)
+    , tim4_("TIM4", mcu::kTim4Base, mcu::kIrqTim4, 4, &rcc_, &nvic_)
+    , tim5_("TIM5", mcu::kTim5Base, mcu::kIrqTim5, 5, &rcc_, &nvic_)
     , adc1_(&rcc_, &nvic_)
     , spi1_("SPI1", mcu::kSpi1Base, mcu::kIrqSpi1, &rcc_, &nvic_)
     , i2c1_("I2C1", mcu::kI2c1Base, mcu::kIrqI2c1Ev, mcu::kIrqI2c1Er, &rcc_, &nvic_)
@@ -54,6 +56,8 @@ void Machine::wirePeripherals() {
     bus_.add(&usart6_);
     bus_.add(&tim2_);
     bus_.add(&tim3_);
+    bus_.add(&tim4_);
+    bus_.add(&tim5_);
     bus_.add(&adc1_);
     bus_.add(&spi1_);
     bus_.add(&i2c1_);
@@ -128,6 +132,8 @@ void Machine::resetMcu() {
     usart6_.reset();
     tim2_.reset();
     tim3_.reset();
+    tim4_.reset();
+    tim5_.reset();
     adc1_.reset();
     spi1_.reset();
     i2c1_.reset();
@@ -222,6 +228,8 @@ void Machine::tickPeripherals(uint32_t insns) {
     systick_.tick(insns, rcc_.sysclk());
     tim2_.tick(insns, rcc_.sysclk());
     tim3_.tick(insns, rcc_.sysclk());
+    tim4_.tick(insns, rcc_.sysclk());
+    tim5_.tick(insns, rcc_.sysclk());
 }
 
 void Machine::syncTimers() {
@@ -278,7 +286,8 @@ void Machine::deliverFault() {
 uint32_t Machine::cyclesToNextEvent() const {
     const uint32_t sys = rcc_.sysclk();
     const uint64_t c = std::min({systick_.cyclesUntilInterrupt(sys), tim2_.cyclesUntilInterrupt(sys),
-                                 tim3_.cyclesUntilInterrupt(sys)});
+                                 tim3_.cyclesUntilInterrupt(sys), tim4_.cyclesUntilInterrupt(sys),
+                                 tim5_.cyclesUntilInterrupt(sys)});
     return c > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(c);
 }
 
@@ -355,7 +364,20 @@ MachineSnapshot Machine::snapshot() const {
     s.sp = cpu_.sp();
     s.lr = cpu_.lr();
     s.gpioD = gpio_[3]->odr();
-    s.leds = (s.gpioD >> 12) & 0xFu;
+    const GpioBank &ledPort = *gpio_[mcu::kDiscoveryLedPort];
+    for (int i = 0; i < 4; ++i) {
+        const int pin = 12 + i;
+        float level = (s.gpioD >> pin) & 1u ? 1.0f : 0.0f;
+        if (ledPort.pinMode(pin) == 2) {
+            // Alternate function: driven by the peripheral, not by ODR. AF2 on PD12-15 is
+            // TIM4 CH1-CH4 (the Discovery PWM exercise); other AFs are not modelled.
+            const double pwm = ledPort.pinAf(pin) == 2 ? tim4_.outputLevel(i + 1) : -1.0;
+            level = pwm > 0 ? static_cast<float>(pwm) : 0.0f;
+        }
+        s.ledLevel[i] = level;
+        if (level > 0)
+            s.leds |= 1u << i;
+    }
     s.button = buttonPressed_;
     s.rccCr = rcc_.cr();
     s.rccCfgr = rcc_.cfgr();

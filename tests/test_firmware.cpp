@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -120,6 +121,25 @@ TEST_F(FirmwareTest, FpuIrqKeepsFloatRegistersOfInterruptedCode) {
     EXPECT_GE(countLedToggles(3000000, 0x1, &stop), 2) << "green: rounds computed correctly";
     EXPECT_NE(stop, CpuEngine::StopReason::Fault) << m.status();
     EXPECT_FALSE(m.snapshot().leds & 0x4) << "red: FP registers were corrupted by the interrupt";
+}
+
+// TIM4 CH1-CH4 on PD12-PD15 (AF2): LED brightness = PWM duty; CCR1 ramps from SysTick.
+TEST_F(FirmwareTest, Tim4PwmSetsLedBrightness) {
+    load("tim4_pwm");
+    float minGreen = 1.0f, maxGreen = 0.0f;
+    auto stop = runSampling(m, 16000000, [&] { // 1 s: green ramps 0 -> 100%
+        const float g = m.snapshot().ledLevel[0];
+        minGreen = std::min(minGreen, g);
+        maxGreen = std::max(maxGreen, g);
+    });
+    EXPECT_NE(stop, CpuEngine::StopReason::Fault) << m.status();
+    const auto s = m.snapshot();
+    EXPECT_FLOAT_EQ(s.ledLevel[1], 0.25f);
+    EXPECT_FLOAT_EQ(s.ledLevel[2], 0.5f);
+    EXPECT_FLOAT_EQ(s.ledLevel[3], 1.0f);
+    EXPECT_EQ(s.leds & 0xEu, 0xEu);
+    EXPECT_LT(minGreen, 0.05f);
+    EXPECT_GT(maxGreen, 0.9f);
 }
 
 TEST_F(FirmwareTest, HardFaultExampleReachesHandler) {

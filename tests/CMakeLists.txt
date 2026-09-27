@@ -30,7 +30,7 @@ find_program(MK_EMUL_ARM_GCC arm-none-eabi-gcc
 set(FW_DIR ${CMAKE_CURRENT_BINARY_DIR}/firmware)
 file(GLOB DEVICE_HEADERS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/device/stm32f407/include/*.h)
 set(DEVICE_DIR ${CMAKE_SOURCE_DIR}/device/stm32f407)
-set(FW_EXAMPLES blinky uart_printf systick_exti hardfault fpu_irq)
+set(FW_EXAMPLES blinky uart_printf systick_exti hardfault fpu_irq tim4_pwm)
 
 if(MK_EMUL_ARM_GCC)
     message(STATUS "mk_emul tests: firmware built with ${MK_EMUL_ARM_GCC}")
