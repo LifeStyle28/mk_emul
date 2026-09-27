@@ -56,6 +56,11 @@ public:
     void setPsp(uint32_t value);
     void setControl(uint32_t value);
     void setPrimask(uint32_t value);
+    // FPU: single-precision registers S0-S31 and FPSCR.
+    uint32_t sreg(int n) const;
+    void setSreg(int n, uint32_t value);
+    uint32_t fpscr() const;
+    void setFpscr(uint32_t value);
 
     void snapshotRegs(uint32_t out[16]) const;
     void readBanked();

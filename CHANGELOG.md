@@ -267,9 +267,54 @@ Ninja в UTF-8. Ninja не узнавала строки, и после изме
 Файлы: `src/core/MmioBus.{h,cpp}`, `src/core/Machine.{h,cpp}`, `src/core/CpuEngine.h`,
 `tests/test_nvic.cpp`, `tests/test_firmware.cpp`, `tests/asm/*.s`, `tests/cortex_programs.inc`.
 
+## Сохранение контекста FPU в прерываниях
+
+**Было:** при входе в исключение сохранялся только базовый фрейм (R0–R3, R12, LR, PC, xPSR).
+Прошивки собираются с `-mfloat-abi=hard`, и компилятор полагается на то, что регистры
+S0–S15 и FPSCR прерванного кода сохранит аппаратура. Поэтому если и основной код, и обработчик
+прерывания считали во float, обработчик портил регистры основного кода: результаты вычислений
+тихо становились неверными. Кроме того, бит CONTROL.FPCA, который Unicorn выставляет при первой
+FP-инструкции в обработчике, оставался выставленным и после возврата в основной код.
+
+**Стало** (как в Cortex-M4, раздел B1.5.7 ARMv7-M ARM):
+- если у прерываемого кода есть активный FP-контекст (CONTROL.FPCA = 1), в стек кладётся
+  расширенный фрейм 0x68 байт: базовая часть, S0–S15, FPSCR, резервное слово;
+- `EXC_RETURN` = `0xFFFFFFE9` / `0xFFFFFFED` / `0xFFFFFFE1` (бит 4 = 0 — фрейм с FPU);
+- обработчик начинает без FP-контекста (FPCA = 0), при возврате S0–S15 и FPSCR
+  восстанавливаются, FPCA берётся из `EXC_RETURN`;
+- добавлены регистры FPCCR (сброс `0xC0000000`: ASPEN, LSPEN), FPCAR (адрес места для S0 во
+  фрейме), FPDSCR, MVFR0/MVFR1 (описание FPU Cortex-M4).
+- `CpuEngine::setControl` теперь перестраивает кэшированные флаги Unicorn: от FPCA зависит, как
+  транслируется следующая FP-инструкция (как и с xPSR, см. пункт 4).
+
+Ленивое сохранение (LSPEN) эмулируется «жадно»: регистры пишутся в зарезервированное место
+сразу при входе. Для программы результат в памяти тот же, а LSPACT всегда 0.
+
+Тесты, все падали на старом коде:
+- `tests/asm/fpu_frame.s` → `NvicTest.FpuContextIsSavedAcrossInterrupt`: S0, S15 и FPSCR
+  основного кода переживают обработчик, который их меняет; LR = `0xFFFFFFE9`; фрейм 0x68 байт;
+  FPCA сбрасывается при входе и восстанавливается при выходе;
+- `fpu_handler_only.s` → `HandlerUsingFpuAfterIntegerCodeUsesBasicFrame`: если FPU
+  использует только обработчик, фрейм базовый (`0xFFFFFFF9`), FPCA не «протекает» в основной код;
+- `fpu_nested.s` → `NestedHandlerRestoresFpuContextOfPreemptedHandler`: вложенное прерывание
+  (`0xFFFFFFE1`) не портит S1 вытесненного обработчика;
+- новый пример `examples/fpu_irq` → `FirmwareTest.FpuIrqKeepsFloatRegistersOfInterruptedCode`:
+  настоящая прошивка на C, `main()` суммирует float, SysTick каждые 157 тактов тоже считает во
+  float. На старом коде сумма получалась неверной и загорался красный светодиод.
+
+Всего 77 тестов. Скорость не изменилась (132 / 147 / 110 млн инструкций в секунду).
+В чек-лист добавлен раздел 6а, в README — пример `fpu_irq`. Заодно в README исправлены
+испорченные пути `scripts\test.bat` и `build\tests\...` (вместо `\t` стояла табуляция).
+
+Файлы: `src/core/Nvic.{h,cpp}`, `src/core/CpuEngine.{h,cpp}`, `examples/fpu_irq/main.c`,
+`tests/asm/fpu_*.s`, `tests/cortex_programs.inc`, `tests/test_nvic.cpp`,
+`tests/test_firmware.cpp`, `tests/CMakeLists.txt`, `README.md`, `docs/MANUAL_TESTING.md`.
+
 ## Известные ограничения (кандидаты на доработку)
 
-- При входе в исключение не сохраняется контекст FPU (расширенный фрейм, `EXC_RETURN 0xFFFFFFE9`).
+- FPU работает, даже если прошивка не включила его в `SCB->CPACR`. На настоящем МК первая
+  FP-инструкция тогда вызывает UsageFault (NOCP), а в Unicorn доступ к FPU разрешён всегда.
+- FPDSCR хранится, но не применяется: новый FP-контекст в обработчике получает FPSCR = 0.
 - Консоль UART не очищается при загрузке другой прошивки (есть кнопка Clear).
 
 ## Исправления интерфейса (найдены при проверке окна)

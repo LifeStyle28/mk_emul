@@ -42,17 +42,18 @@ Console smoke run without UI: `mk_emul.exe --headless [steps] [firmware.elf|.hex
 ## Tests
 
 ```bat
-scripts	est.bat
+scripts\test.bat
 ```
-Builds everything and runs CTest (43 tests, ~7 s):
+Builds everything and runs CTest (77 tests, ~8 s):
 - **unit tests** (GoogleTest, `tests/`) for the Qt-free core library `mk_emul_core`: RCC clock tree,
   GPIO/EXTI, register semantics (partial writes, rc_w0/rc_w1), SysTick/TIM/ADC/USART, CPU
-  (instruction count, breakpoints, SysTick exception entry/return, HardFault/BusFault/lockup);
+  (instruction count, breakpoints, SysTick exception entry/return, HardFault/BusFault/lockup),
+  NVIC (interrupt latency, priorities, SVC/PendSV, FPU context on exception entry);
 - **firmware tests**: `examples/*` compiled with `arm-none-eabi-gcc` and run on the emulator
   (skipped if the toolchain is missing);
 - **end-to-end**: `mk_emul.exe --headless` with real firmware.
 
-Single test: `build	ests\mk_emul_tests.exe --gtest_filter=MachineTest.*`.
+Single test: `build\tests\mk_emul_tests.exe --gtest_filter=NvicTest.*`.
 Manual UI checklist: [docs/MANUAL_TESTING.md](docs/MANUAL_TESTING.md).
 
 ## Examples
@@ -61,3 +62,5 @@ Manual UI checklist: [docs/MANUAL_TESTING.md](docs/MANUAL_TESTING.md).
 - `examples/uart_printf` — USART2 text
 - `examples/systick_exti` — SysTick delay + EXTI0 (USER button)
 - `examples/hardfault` — unmapped read → `HardFault_Handler`, shows CFSR/HFSR/BFAR
+- `examples/fpu_irq` — float math in `main()` and in a frequent SysTick interrupt (FPU context
+  saving): green LED blinks, red means FP registers were corrupted

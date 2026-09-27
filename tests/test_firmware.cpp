@@ -112,6 +112,16 @@ TEST_F(FirmwareTest, ReloadingSameInterruptFirmwareStartsClean) {
     EXPECT_NE(stop, CpuEngine::StopReason::Fault) << m.status();
 }
 
+// Float math in main() and in a SysTick handler firing every 157 cycles: the compiler relies on
+// the hardware saving S0-S15/FPSCR, so without the extended frame main() computes a wrong sum.
+TEST_F(FirmwareTest, FpuIrqKeepsFloatRegistersOfInterruptedCode) {
+    load("fpu_irq");
+    CpuEngine::StopReason stop;
+    EXPECT_GE(countLedToggles(3000000, 0x1, &stop), 2) << "green: rounds computed correctly";
+    EXPECT_NE(stop, CpuEngine::StopReason::Fault) << m.status();
+    EXPECT_FALSE(m.snapshot().leds & 0x4) << "red: FP registers were corrupted by the interrupt";
+}
+
 TEST_F(FirmwareTest, HardFaultExampleReachesHandler) {
     load("hardfault");
     ASSERT_EQ(runFor(m, 2000000), CpuEngine::StopReason::Fault);

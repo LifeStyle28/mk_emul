@@ -169,8 +169,17 @@ void CpuEngine::setXpsr(uint32_t value) {
 }
 void CpuEngine::setMsp(uint32_t value) { setReg(UC_ARM_REG_MSP, value); }
 void CpuEngine::setPsp(uint32_t value) { setReg(UC_ARM_REG_PSP, value); }
-void CpuEngine::setControl(uint32_t value) { setReg(UC_ARM_REG_CONTROL, value); }
+void CpuEngine::setControl(uint32_t value) {
+    setReg(UC_ARM_REG_CONTROL, value);
+    // CONTROL.FPCA decides whether the next FP instruction creates a new FP context; like XPSR,
+    // it is part of the cached hflags, which only an APSR_NZCV write rebuilds.
+    setReg(UC_ARM_REG_APSR_NZCV, xpsr());
+}
 void CpuEngine::setPrimask(uint32_t value) { setReg(UC_ARM_REG_PRIMASK, value); }
+uint32_t CpuEngine::sreg(int n) const { return reg(UC_ARM_REG_S0 + n); }
+void CpuEngine::setSreg(int n, uint32_t value) { setReg(UC_ARM_REG_S0 + n, value); }
+uint32_t CpuEngine::fpscr() const { return reg(UC_ARM_REG_FPSCR); }
+void CpuEngine::setFpscr(uint32_t value) { setReg(UC_ARM_REG_FPSCR, value); }
 
 void CpuEngine::snapshotRegs(uint32_t out[16]) const {
     const int ids[16] = {

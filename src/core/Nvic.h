@@ -59,6 +59,10 @@ public:
     uint32_t debugCpacr() const { return cpacr_; }
 
 private:
+    static constexpr uint32_t kControlFpca = 1u << 2;
+    static constexpr uint32_t kBasicFrameSize = 0x20u; // R0-R3, R12, LR, PC, xPSR
+    static constexpr uint32_t kFpFrameSize = 0x68u;    // + S0-S15, FPSCR, reserved word
+
     int highestPending() const;
     int priorityOf(int exceptionNumber) const;
     int groupPriority(int priority) const; // preemption part per AIRCR.PRIGROUP
@@ -85,6 +89,9 @@ private:
     uint32_t hfsr_ = 0;
     uint32_t mmfar_ = 0;
     uint32_t bfar_ = 0;
+    uint32_t fpccr_ = 0xC0000000u;
+    uint32_t fpcar_ = 0;
+    uint32_t fpdscr_ = 0;
     uint32_t cpuId_ = 0x410FC241u; // Cortex-M4 r0p1
     int currentException_ = 0;
     bool pendingEnabled_ = false;

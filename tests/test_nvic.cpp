@@ -165,4 +165,39 @@ TEST_F(NvicTest, TimerEnabledMidChunkInterruptsOnTime) {
     EXPECT_LE(r(6), 11u);
 }
 
+// FPU context: interrupting code that uses the FPU pushes the extended frame (S0-S15, FPSCR),
+// like the hardware does, so a handler using floats does not corrupt the interrupted code.
+TEST_F(NvicTest, FpuContextIsSavedAcrossInterrupt) {
+    loadImage(m, program(kFpuFrame).vector(kExcIrq0, F + 0x180));
+    run(200);
+    EXPECT_EQ(r(7), 0xFFFFFFE9u) << "EXC_RETURN: thread, MSP, extended frame";
+    EXPECT_EQ(r(2) & 4u, 0u) << "CONTROL.FPCA is cleared on entry";
+    EXPECT_EQ(r(9) & 4u, 4u) << "the handler's FP instruction sets FPCA";
+    EXPECT_EQ(m.cpu().reg(UC_ARM_REG_R8), kStackTop - 0x68u) << "extended frame is 26 words";
+    EXPECT_EQ(r(5), 0x3F800000u) << "S0 = 1.0 restored";
+    EXPECT_EQ(r(6), 0x40400000u) << "S15 = 3.0 restored";
+    EXPECT_EQ(r(4), 0x03C00000u) << "FPSCR restored";
+    EXPECT_EQ(r(3) & 4u, 4u) << "thread gets FPCA back";
+    EXPECT_EQ(m.cpu().sp(), kStackTop);
+}
+
+TEST_F(NvicTest, HandlerUsingFpuAfterIntegerCodeUsesBasicFrame) {
+    loadImage(m, program(kFpuHandlerOnly).vector(kExcIrq0, F + 0x140));
+    run(100);
+    EXPECT_EQ(r(7), 0xFFFFFFF9u);
+    EXPECT_EQ(r(5), 0x40000000u) << "handler computed 2.0";
+    EXPECT_EQ(r(3) & 4u, 0u) << "FPCA does not leak from the handler into the thread";
+    EXPECT_EQ(r(4), kStackTop);
+}
+
+TEST_F(NvicTest, NestedHandlerRestoresFpuContextOfPreemptedHandler) {
+    loadImage(m, program(kFpuNested).vector(kExcIrq0, F + 0x140).vector(kExcIrq1, F + 0x180));
+    run(200);
+    EXPECT_EQ(r(7), 0xFFFFFFE1u) << "EXC_RETURN: handler, extended frame";
+    EXPECT_EQ(r(5), 0x40A00000u) << "IRQ0 sees its S1 = 5.0 after IRQ1";
+    EXPECT_EQ(r(4), kStackTop);
+    EXPECT_EQ(m.cpu().sp(), kStackTop);
+    EXPECT_EQ(ipsr(), 0u);
+}
+
 } // namespace

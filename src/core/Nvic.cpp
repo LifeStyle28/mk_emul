@@ -38,6 +38,9 @@ void Nvic::reset() {
     hfsr_ = 0;
     mmfar_ = 0;
     bfar_ = 0;
+    fpccr_ = 0xC0000000u; // ASPEN | LSPEN
+    fpcar_ = 0;
+    fpdscr_ = 0;
     currentException_ = 0;
     pendingEnabled_ = false;
     resetRequested_ = false;
@@ -182,11 +185,14 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
     const bool handlerMode = ipsr != 0;
     const bool spSel = (control & 2u) != 0;
     const bool usePsp = !handlerMode && spSel;
+    // CONTROL.FPCA: the interrupted code has an active FP context (Unicorn sets it on the first
+    // FP instruction). Then the extended frame also holds S0-S15 and FPSCR.
+    const bool fpFrame = (control & kControlFpca) != 0;
 
     uint32_t frame = usePsp ? cpu.psp() : cpu.msp();
     const uint32_t align = frame & 4u;
     frame &= ~4u;
-    frame -= 0x20u;
+    frame -= fpFrame ? kFpFrameSize : kBasicFrameSize;
 
     uint32_t r[16];
     cpu.snapshotRegs(r);
@@ -204,6 +210,14 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
     else
         stackedXpsr &= ~(1u << 9);
     cpu.write32(frame + 28, stackedXpsr);
+    if (fpFrame) {
+        // Saved eagerly; with lazy stacking (FPCCR.LSPEN) the hardware only reserves the space
+        // and fills it on the handler's first FP instruction - the same memory in the end.
+        for (int i = 0; i < 16; ++i)
+            cpu.write32(frame + 0x20u + 4u * i, cpu.sreg(i));
+        cpu.write32(frame + 0x60u, cpu.fpscr());
+        fpcar_ = frame + 0x20u;
+    }
 
     if (usePsp)
         cpu.setPsp(frame);
@@ -215,6 +229,8 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
         excReturn = 0xFFFFFFF1u;
     else if (spSel)
         excReturn = 0xFFFFFFFDu;
+    if (fpFrame)
+        excReturn &= ~0x10u; // 0xFFFFFFE1 / E9 / ED
     cpu.setLr(excReturn);
 
     const uint32_t handler = vectorAddress(exceptionNumber);
@@ -222,7 +238,7 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
 
     const uint32_t newXpsr = (xpsr & ~0x1FFu) | (static_cast<uint32_t>(exceptionNumber) & 0x1FFu) | (1u << 24);
     cpu.setXpsr(newXpsr);
-    cpu.setControl(control & ~2u);
+    cpu.setControl(control & ~(2u | kControlFpca)); // the handler starts without an FP context
     cpu.setSp(cpu.msp());
 
     currentException_ = exceptionNumber;
@@ -237,6 +253,7 @@ void Nvic::exitException(CpuEngine &cpu, uint32_t excReturn) {
     const uint32_t mode = excReturn & 0xFu;
     const bool toPsp = mode == 0xDu;
     const bool toHandler = mode == 0x1u;
+    const bool fpFrame = (excReturn & 0x10u) == 0;
 
     uint32_t frame = toPsp ? cpu.psp() : cpu.msp();
     const uint32_t r0 = cpu.read32(frame + 0);
@@ -248,6 +265,16 @@ void Nvic::exitException(CpuEngine &cpu, uint32_t excReturn) {
     const uint32_t pc = cpu.read32(frame + 24);
     const uint32_t xpsr = cpu.read32(frame + 28);
 
+    if (fpFrame) {
+        for (int i = 0; i < 16; ++i)
+            cpu.setSreg(i, cpu.read32(frame + 0x20u + 4u * i));
+        cpu.setFpscr(cpu.read32(frame + 0x60u));
+    }
+    // FPCA comes from EXC_RETURN. Written while still in handler mode: CONTROL writes from
+    // unprivileged thread code are ignored.
+    const uint32_t control = cpu.control();
+    cpu.setControl(fpFrame ? control | kControlFpca : control & ~kControlFpca);
+
     cpu.setReg(UC_ARM_REG_R0, r0);
     cpu.setReg(UC_ARM_REG_R1, r1);
     cpu.setReg(UC_ARM_REG_R2, r2);
@@ -257,7 +284,7 @@ void Nvic::exitException(CpuEngine &cpu, uint32_t excReturn) {
     cpu.setPc(pc & ~1u);
     cpu.setXpsr(xpsr | (1u << 24));
 
-    frame += 0x20u;
+    frame += fpFrame ? kFpFrameSize : kBasicFrameSize;
     if (xpsr & (1u << 9))
         frame += 4u;
 
@@ -394,6 +421,16 @@ uint32_t Nvic::read32(uint32_t addr) {
         return mmfar_;
     if (addr == 0xE000ED38u)
         return bfar_;
+    if (addr == 0xE000EF34u)
+        return fpccr_;
+    if (addr == 0xE000EF38u)
+        return fpcar_;
+    if (addr == 0xE000EF3Cu)
+        return fpdscr_;
+    if (addr == 0xE000EF40u)
+        return 0x10110021u; // MVFR0: single precision, FP registers, sqrt, divide
+    if (addr == 0xE000EF44u)
+        return 0x11000011u; // MVFR1: FPv4 with FTZ/DN, half precision, fused MAC
     if (addr >= 0xE000ED18u && addr < 0xE000ED24u) {
         const uint32_t off = addr - 0xE000ED18u;
         uint32_t w = 0;
@@ -491,6 +528,18 @@ void Nvic::write32(uint32_t addr, uint32_t value) {
     }
     if (addr == 0xE000ED38u) {
         bfar_ = value;
+        return;
+    }
+    if (addr == 0xE000EF34u) {
+        fpccr_ = value & 0xC00001FBu;
+        return;
+    }
+    if (addr == 0xE000EF38u) {
+        fpcar_ = value & ~7u;
+        return;
+    }
+    if (addr == 0xE000EF3Cu) {
+        fpdscr_ = value & 0x07C00000u; // AHP, DN, FZ, RMode
         return;
     }
     if (addr >= 0xE000ED18u && addr < 0xE000ED24u) {
