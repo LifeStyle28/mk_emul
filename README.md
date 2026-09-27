@@ -51,7 +51,7 @@ Console smoke run without UI: `mk_emul.exe --headless [steps] [firmware.elf|.hex
 ```bat
 scripts\test.bat
 ```
-Builds everything and runs CTest (101 tests, ~15 s):
+Builds everything and runs CTest (103 tests, ~12 s):
 - **unit tests** (GoogleTest, `tests/`) for the Qt-free core library `mk_emul_core`: RCC clock tree,
   GPIO/EXTI, register semantics (partial writes, rc_w0/rc_w1), SysTick/TIM/ADC/USART, CPU
   (instruction count, breakpoints, SysTick exception entry/return, HardFault/BusFault/lockup),
