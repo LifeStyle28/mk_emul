@@ -27,6 +27,8 @@ public:
     void mapRam(uint32_t addr, uint32_t size);
     void mapMmio(uint32_t addr, uint32_t size, MmioBus *bus);
     void writeMem(uint32_t addr, const void *data, size_t size);
+    // Drop translated code; required after replacing code in memory (new firmware).
+    void flushCodeCache();
     void readMem(uint32_t addr, void *data, size_t size) const;
     uint32_t read32(uint32_t addr) const;
     void write32(uint32_t addr, uint32_t value);
@@ -74,6 +76,7 @@ public:
     void setFaultHandler(FaultHandler handler);
 
     uint64_t instructionCount() const { return insnCount_; }
+    void resetInstructionCount() { insnCount_ = 0; }
     uint64_t lastRunCount() const { return runExecuted_; }
     FaultKind faultKind() const { return faultKind_; }
     const std::string &lastError() const { return lastError_; }

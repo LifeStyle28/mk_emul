@@ -183,3 +183,22 @@ TEST_F(MachineTest, UndefinedInstructionIsUsageFaultEscalated) {
 }
 
 } // namespace
+
+namespace {
+
+// Found by the manual checklist: README.md picked in "Open FW..." loaded as a raw binary.
+TEST_F(MachineTest, RejectsFileWithoutVectorTable) {
+    const std::string text = "# mk_emul - STM32F407 emulator\nDesktop emulator of STM32F407VG";
+    const auto img = m.loadFirmwareBuffer(reinterpret_cast<const uint8_t *>(text.data()), text.size(), "README.md");
+    EXPECT_FALSE(img.ok);
+    EXPECT_EQ(img.error.rfind("Not a firmware image", 0), 0u) << img.error;
+    EXPECT_EQ(m.cpu().pc(), 0x08000008u) << "previous firmware (builtin) stays loaded";
+}
+
+TEST_F(MachineTest, AcceptsRawBinaryWithVectorTable) {
+    const auto img = loopImage();
+    const auto r = m.loadFirmwareBuffer(img.bytes().data(), img.bytes().size(), "fw.bin");
+    EXPECT_TRUE(r.ok) << r.error;
+}
+
+} // namespace

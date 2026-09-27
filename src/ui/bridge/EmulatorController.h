@@ -41,9 +41,14 @@ signals:
     void memoryReady(quint32 addr, const QByteArray &data);
     void disasmReady(const QVector<DisasmModel::Row> &rows);
     void statusChanged(const QString &text);
+    void runStateChanged(bool running);
 
 private:
     void emitSnap(bool force);
+    void setRunning(bool running) {
+        running_ = running;
+        emit runStateChanged(running);
+    }
 
     Machine machine_;
     Disassembler disasm_;
@@ -107,6 +112,8 @@ signals:
 
 private:
     void applySnapshot(const MachineSnapshot &snap, const QByteArray &uart);
+    // Parses "0x..." / decimal; on error shows a status message and returns false.
+    bool addressFromText(const QString &text, quint32 *out);
 
     QThread workerThread_;
     MachineWorker *worker_ = nullptr;

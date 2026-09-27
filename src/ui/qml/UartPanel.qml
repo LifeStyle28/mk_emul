@@ -10,19 +10,25 @@ PanelCard {
         anchors.fill: parent
         anchors.margins: 8
         spacing: 6
-        TextArea {
+        ScrollView {
+            id: uartScroll
             Layout.fillWidth: true
             Layout.fillHeight: true
-            readOnly: true
-            wrapMode: TextEdit.Wrap
-            selectByMouse: true
-            font.family: Theme.monoFont
-            font.pixelSize: 12
-            text: uartModel.text
-            color: Theme.codeGreen
-            selectedTextColor: Theme.bg
-            selectionColor: Theme.accent
-            background: Rectangle { color: Theme.panelAlt; radius: 6; border.color: Theme.border }
+            clip: true
+            TextArea {
+                // Follow new output (like a terminal).
+                onTextChanged: cursorPosition = length
+                readOnly: true
+                wrapMode: TextEdit.Wrap
+                selectByMouse: true
+                font.family: Theme.monoFont
+                font.pixelSize: 12
+                text: uartModel.text
+                color: Theme.codeGreen
+                selectedTextColor: Theme.bg
+                selectionColor: Theme.accent
+                background: Rectangle { color: Theme.panelAlt; radius: 6; border.color: Theme.border }
+            }
         }
         RowLayout {
             spacing: 6

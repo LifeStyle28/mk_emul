@@ -90,6 +90,26 @@ TEST_F(FirmwareTest, SysTickExtiButtonTogglesRedLed) {
     EXPECT_NE(m.cpu().lastStop(), CpuEngine::StopReason::Fault) << m.status();
 }
 
+// Regression (found by the manual UI checklist): loading a firmware over one that already ran,
+// as the UI does on Build & Load, must behave like a fresh start.
+TEST_F(FirmwareTest, LoadingOverPreviousFirmwareStartsClean) {
+    load("uart_printf");
+    runFor(m, 1000000);
+    load("systick_exti");
+    CpuEngine::StopReason stop;
+    EXPECT_GE(countLedToggles(8000000, 0x1, &stop), 2);
+    EXPECT_NE(stop, CpuEngine::StopReason::Fault) << m.status();
+}
+
+TEST_F(FirmwareTest, ReloadingSameInterruptFirmwareStartsClean) {
+    load("systick_exti");
+    runFor(m, 5000000); // likely stopped inside SysTick_Handler at some point
+    load("systick_exti");
+    CpuEngine::StopReason stop;
+    EXPECT_GE(countLedToggles(8000000, 0x1, &stop), 2);
+    EXPECT_NE(stop, CpuEngine::StopReason::Fault) << m.status();
+}
+
 TEST_F(FirmwareTest, HardFaultExampleReachesHandler) {
     load("hardfault");
     ASSERT_EQ(runFor(m, 2000000), CpuEngine::StopReason::Fault);

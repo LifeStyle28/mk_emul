@@ -43,14 +43,14 @@ void MachineWorker::emitSnap(bool force) {
 
 void MachineWorker::reset() {
     machine_.reset();
-    running_ = false;
+    setRunning(false);
     emitSnap(true);
     requestDisasm();
     emit statusChanged(QString::fromStdString(machine_.status()));
 }
 
 void MachineWorker::step() {
-    running_ = false;
+    setRunning(false);
     machine_.step();
     emitSnap(true);
     requestDisasm();
@@ -58,12 +58,12 @@ void MachineWorker::step() {
 }
 
 void MachineWorker::startRun() {
-    running_ = true;
+    setRunning(true);
     tick();
 }
 
 void MachineWorker::pause() {
-    running_ = false;
+    setRunning(false);
     emitSnap(true);
     requestDisasm();
     emit statusChanged(QStringLiteral("Paused"));
@@ -75,7 +75,7 @@ void MachineWorker::tick() {
     const auto stop = machine_.runQuantum(12000);
     emitSnap(stop != CpuEngine::StopReason::Quantum);
     if (stop == CpuEngine::StopReason::Breakpoint || stop == CpuEngine::StopReason::Fault) {
-        running_ = false;
+        setRunning(false);
         requestDisasm();
         emit statusChanged(QString::fromStdString(machine_.status()));
         return;
@@ -84,7 +84,7 @@ void MachineWorker::tick() {
 }
 
 void MachineWorker::loadPath(const QString &path) {
-    running_ = false;
+    setRunning(false);
     auto img = machine_.loadFirmware(path.toStdString());
     emitSnap(true);
     requestDisasm();
@@ -92,7 +92,7 @@ void MachineWorker::loadPath(const QString &path) {
 }
 
 void MachineWorker::loadBuiltin() {
-    running_ = false;
+    setRunning(false);
     machine_.loadBuiltinBlinky();
     emitSnap(true);
     requestDisasm();
@@ -153,9 +153,12 @@ EmulatorController::EmulatorController(QObject *parent)
     connect(worker_, &MachineWorker::statusChanged, this, [this](const QString &s) {
         status_ = s;
         emit statusChanged();
-        if (s == QLatin1String("Paused") || s == QLatin1String("Breakpoint") || s.startsWith(QLatin1String("read"))
-            || s.startsWith(QLatin1String("fetch")) || s.startsWith(QLatin1String("write"))) {
-            running_ = false;
+    });
+    // The worker reports run/stop explicitly; guessing from status text broke when fault
+    // messages changed ("HardFault: ..." left the UI showing RUNNING).
+    connect(worker_, &MachineWorker::runStateChanged, this, [this](bool running) {
+        if (running_ != running) {
+            running_ = running;
             emit runningChanged();
         }
     });
@@ -264,10 +267,18 @@ void EmulatorController::loadBuiltin() {
     QMetaObject::invokeMethod(worker_, "loadBuiltin", Qt::QueuedConnection);
 }
 
-static quint32 parseAddr(const QString &t) {
+static bool parseAddr(const QString &t, quint32 *out) {
     bool ok = false;
-    quint32 v = t.trimmed().toUInt(&ok, 0);
-    return ok ? v : 0;
+    *out = t.trimmed().toUInt(&ok, 0);
+    return ok;
+}
+
+bool EmulatorController::addressFromText(const QString &text, quint32 *out) {
+    if (parseAddr(text, out))
+        return true;
+    status_ = QStringLiteral("Invalid address: \"%1\" (use hex like 0x08000000)").arg(text.trimmed());
+    emit statusChanged();
+    return false;
 }
 
 void EmulatorController::setBreakpointText(const QString &t) {
@@ -285,15 +296,24 @@ void EmulatorController::setMemoryAddressText(const QString &t) {
 }
 
 void EmulatorController::addBreakpoint() {
-    QMetaObject::invokeMethod(worker_, "addBreakpoint", Qt::QueuedConnection, Q_ARG(quint32, parseAddr(breakpointText_)));
+    quint32 addr = 0;
+    if (!addressFromText(breakpointText_, &addr))
+        return;
+    QMetaObject::invokeMethod(worker_, "addBreakpoint", Qt::QueuedConnection, Q_ARG(quint32, addr));
 }
 
 void EmulatorController::removeBreakpoint() {
-    QMetaObject::invokeMethod(worker_, "removeBreakpoint", Qt::QueuedConnection, Q_ARG(quint32, parseAddr(breakpointText_)));
+    quint32 addr = 0;
+    if (!addressFromText(breakpointText_, &addr))
+        return;
+    QMetaObject::invokeMethod(worker_, "removeBreakpoint", Qt::QueuedConnection, Q_ARG(quint32, addr));
 }
 
 void EmulatorController::goMemory() {
-    QMetaObject::invokeMethod(worker_, "requestMemory", Qt::QueuedConnection, Q_ARG(quint32, parseAddr(memoryAddressText_)));
+    quint32 addr = 0;
+    if (!addressFromText(memoryAddressText_, &addr))
+        return;
+    QMetaObject::invokeMethod(worker_, "requestMemory", Qt::QueuedConnection, Q_ARG(quint32, addr));
 }
 
 void EmulatorController::attachHighlighter(QQuickTextDocument *doc) {

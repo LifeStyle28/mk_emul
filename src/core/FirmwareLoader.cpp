@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -61,6 +62,33 @@ LoadedImage FirmwareLoader::load(CpuEngine &cpu, const std::string &path) {
     return loadBuffer(cpu, data.data(), data.size(), path);
 }
 
+bool FirmwareLoader::looksLikeVectorTable(const uint8_t *data, size_t size, std::string *why) {
+    auto word = [&](size_t i) {
+        return static_cast<uint32_t>(data[i]) | (static_cast<uint32_t>(data[i + 1]) << 8) |
+               (static_cast<uint32_t>(data[i + 2]) << 16) | (static_cast<uint32_t>(data[i + 3]) << 24);
+    };
+    if (size < 8) {
+        if (why)
+            *why = "file is too small";
+        return false;
+    }
+    const uint32_t sp = word(0);
+    const uint32_t reset = word(4);
+    auto in = [](uint32_t a, uint32_t base, uint32_t len) { return a >= base && a <= base + len; };
+    const bool spOk = in(sp, mcu::kSramBase, mcu::kSramSize) || in(sp, mcu::kCcmBase, mcu::kCcmSize);
+    const bool resetOk = (reset & 1u) &&
+                         (in(reset, mcu::kFlashBase, mcu::kFlashSize) || in(reset, mcu::kFlashAlias, mcu::kFlashSize) ||
+                          in(reset, mcu::kSramBase, mcu::kSramSize));
+    if (spOk && resetOk)
+        return true;
+    if (why) {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "no vector table at the start (initial SP=0x%08X, reset=0x%08X)", sp, reset);
+        *why = buf;
+    }
+    return false;
+}
+
 LoadedImage FirmwareLoader::loadBuffer(CpuEngine &cpu, const uint8_t *data, size_t size,
                                        const std::string &hintName) {
     if (size >= 4 && data[0] == 0x7F && data[1] == 'E' && data[2] == 'L' && data[3] == 'F')
@@ -79,6 +107,14 @@ LoadedImage FirmwareLoader::loadBuffer(CpuEngine &cpu, const uint8_t *data, size
     }
     if (looksHex)
         return loadHex(cpu, data, size);
+    // Raw binary: refuse files without a plausible vector table (e.g. a text file picked by
+    // mistake would otherwise "load" and fault on the first instruction).
+    std::string why;
+    if (!looksLikeVectorTable(data, size, &why)) {
+        LoadedImage r;
+        r.error = "Not a firmware image: " + why;
+        return r;
+    }
     return loadBin(cpu, data, size, mcu::kFlashBase);
 }
 

@@ -98,6 +98,13 @@ void CpuEngine::writeMem(uint32_t addr, const void *data, size_t size) {
     uc_mem_write(uc_, addr, data, size);
 }
 
+void CpuEngine::flushCodeCache() {
+    // Unicorn caches translated blocks by address and does not drop them on uc_mem_write:
+    // without this, code of the previous firmware keeps running at the same addresses.
+    if (uc_)
+        uc_ctl_flush_tb(uc_);
+}
+
 void CpuEngine::readMem(uint32_t addr, void *data, size_t size) const {
     if (uc_mem_read(uc_, addr, data, size) == UC_ERR_OK)
         return;

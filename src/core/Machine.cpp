@@ -113,6 +113,8 @@ void Machine::reset() {
     wwdg_.reset();
     buttonPressed_ = false;
     std::memset(lastGpioIdr_, 0, sizeof(lastGpioIdr_));
+    nvic_.write32(0xE000ED08u, vectorBase_); // VTOR -> loaded image
+    cpu_.resetInstructionCount();
     applyResetCpu();
     status_ = "Reset";
 }
@@ -135,9 +137,10 @@ void Machine::applyResetCpu() {
 
 void Machine::loadBuiltinBlinky() {
     FirmwareLoader::installBuiltinBlinky(cpu_);
+    cpu_.flushCodeCache();
     vectorBase_ = mcu::kFlashBase;
     firmwareLoaded_ = true;
-    applyResetCpu();
+    reset(); // like flashing a real board: the whole MCU restarts
     status_ = "Builtin blinky loaded";
 }
 
@@ -154,10 +157,11 @@ LoadedImage Machine::applyImage(LoadedImage img, const std::string &name) {
         status_ = img.error;
         return img;
     }
+    cpu_.flushCodeCache(); // the old firmware's translated code must not run any more
     vectorBase_ = img.vectorBase ? img.vectorBase : mcu::kFlashBase;
     firmwareLoaded_ = true;
-    nvic_.write32(0xE000ED08u, vectorBase_); // VTOR
-    applyResetCpu();
+    reset(); // like flashing a real board: peripherals, NVIC and CPU restart
+
     status_ = "Loaded " + name;
     return img;
 }
