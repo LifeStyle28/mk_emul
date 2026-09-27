@@ -17,6 +17,7 @@ const std::string kFwDir = MK_EMUL_FW_DIR;
 struct FirmwareTest : ::testing::Test {
     Machine m;
     std::string uart;
+    std::string warnings; // emulator warnings, "; "-separated
 
     void SetUp() override {
 #ifndef MK_EMUL_FW_DIR
@@ -25,8 +26,13 @@ struct FirmwareTest : ::testing::Test {
         std::string err;
         ASSERT_TRUE(m.initialize(&err)) << err;
         m.setUartTx([this](uint8_t b) { uart.push_back(static_cast<char>(b)); });
+        m.setWarningSink([this](const std::string &w) { warnings += w + "; "; });
 #endif
     }
+
+    // The examples must only use emulated peripherals: a warning means the example (or HAL /
+    // FreeRTOS) relies on something the emulator silently ignores.
+    void TearDown() override { EXPECT_EQ(warnings, "") << "unemulated peripheral accessed"; }
 
     void load(const std::string &name) {
 #ifdef MK_EMUL_FW_DIR

@@ -68,8 +68,11 @@ void MmioBus::bitbandWrite(uint32_t alias, uint32_t value) {
         return;
     }
     auto *p = find(word);
-    if (!p)
+    if (!p) {
+        if (unmapped_)
+            unmapped_(word, true);
         return;
+    }
     if (beforeAccess_)
         beforeAccess_();
     // Other bits as for a byte write (side-effect-free base), so e.g. a bit-band write to a
@@ -84,8 +87,11 @@ uint32_t MmioBus::read(uint32_t addr, unsigned size) {
     if (isBitbandAlias(addr))
         return bitbandRead(addr & ~3u);
     auto *p = find(addr);
-    if (!p)
+    if (!p) {
+        if (unmapped_)
+            unmapped_(addr, false);
         return 0;
+    }
     if (beforeAccess_)
         beforeAccess_();
     const uint32_t word = p->read32(addr & ~3u);
@@ -98,8 +104,11 @@ void MmioBus::write(uint32_t addr, uint32_t value, unsigned size) {
         return;
     }
     auto *p = find(addr);
-    if (!p)
+    if (!p) {
+        if (unmapped_)
+            unmapped_(addr, true);
         return;
+    }
     if (beforeAccess_)
         beforeAccess_();
     const uint32_t aligned = addr & ~3u;

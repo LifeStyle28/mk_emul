@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 Machine::Machine()
@@ -76,6 +77,7 @@ void Machine::wirePeripherals() {
     cpu_.mapMmio(mcu::kPpbBase, mcu::kPpbSize, &bus_);
     cpu_.mapMmio(mcu::kSramBitbandBase, mcu::kSramBitbandSize, &bus_);
     cpu_.mapMmio(mcu::kPeriphBitbandBase, mcu::kPeriphBitbandSize, &bus_);
+    bus_.setUnmappedHook([this](uint32_t addr, bool write) { onUnmappedAccess(addr, write); });
     bus_.setMemoryAccess([this](uint32_t addr) { return cpu_.read32(addr); },
                          [this](uint32_t addr, uint32_t value) { cpu_.write32(addr, value); });
 
@@ -119,6 +121,7 @@ void Machine::reset() {
 }
 
 void Machine::resetMcu() {
+    reportedUnmapped_.clear();
     rcc_.reset();
     nvic_.reset();
     systick_.reset();
@@ -214,6 +217,65 @@ void Machine::uartPush(const std::string &text) {
 
 void Machine::setAnalog(uint32_t value12) {
     adc1_.setAnalogValue(value12);
+}
+
+namespace {
+
+// STM32F407 memory map (RM0090, table 1) for naming unemulated peripherals.
+struct PeriphRange {
+    uint32_t base;
+    uint32_t size;
+    const char *name;
+};
+
+constexpr PeriphRange kPeriphMap[] = {
+    {0x40000000u, 0x400u, "TIM2"}, {0x40000400u, 0x400u, "TIM3"}, {0x40000800u, 0x400u, "TIM4"},
+    {0x40000C00u, 0x400u, "TIM5"}, {0x40001000u, 0x400u, "TIM6"}, {0x40001400u, 0x400u, "TIM7"},
+    {0x40001800u, 0x400u, "TIM12"}, {0x40001C00u, 0x400u, "TIM13"}, {0x40002000u, 0x400u, "TIM14"},
+    {0x40002800u, 0x400u, "RTC/BKP"}, {0x40002C00u, 0x400u, "WWDG"}, {0x40003000u, 0x400u, "IWDG"},
+    {0x40003400u, 0x400u, "I2S2ext"}, {0x40003800u, 0x400u, "SPI2/I2S2"}, {0x40003C00u, 0x400u, "SPI3/I2S3"},
+    {0x40004000u, 0x400u, "I2S3ext"}, {0x40004400u, 0x400u, "USART2"}, {0x40004800u, 0x400u, "USART3"},
+    {0x40004C00u, 0x400u, "UART4"}, {0x40005000u, 0x400u, "UART5"}, {0x40005400u, 0x400u, "I2C1"},
+    {0x40005800u, 0x400u, "I2C2"}, {0x40005C00u, 0x400u, "I2C3"}, {0x40006400u, 0x400u, "CAN1"},
+    {0x40006800u, 0x400u, "CAN2"}, {0x40007000u, 0x400u, "PWR"}, {0x40007400u, 0x400u, "DAC"},
+    {0x40010000u, 0x400u, "TIM1"}, {0x40010400u, 0x400u, "TIM8"}, {0x40011000u, 0x400u, "USART1"},
+    {0x40011400u, 0x400u, "USART6"}, {0x40012000u, 0x400u, "ADC"}, {0x40012C00u, 0x400u, "SDIO"},
+    {0x40013000u, 0x400u, "SPI1"}, {0x40013800u, 0x400u, "SYSCFG"}, {0x40013C00u, 0x400u, "EXTI"},
+    {0x40014000u, 0x400u, "TIM9"}, {0x40014400u, 0x400u, "TIM10"}, {0x40014800u, 0x400u, "TIM11"},
+    {0x40020000u, 0x2400u, "GPIO"}, {0x40023000u, 0x400u, "CRC"}, {0x40023800u, 0x400u, "RCC"},
+    {0x40023C00u, 0x400u, "FLASH"}, {0x40024000u, 0x1000u, "BKPSRAM"}, {0x40026000u, 0x400u, "DMA1"},
+    {0x40026400u, 0x400u, "DMA2"}, {0x40028000u, 0x1400u, "ETH"},
+    {0xE0000000u, 0x1000u, "ITM"}, {0xE0001000u, 0x1000u, "DWT"}, {0xE0002000u, 0x1000u, "FPB"},
+    {0xE000E000u, 0x1000u, "SCS (NVIC/SCB)"},
+};
+
+const char *periphName(uint32_t addr) {
+    for (const auto &r : kPeriphMap) {
+        if (addr >= r.base && addr - r.base < r.size)
+            return r.name;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+void Machine::onUnmappedAccess(uint32_t addr, bool write) {
+    // Only firmware accesses count: the UI memory view also reads MMIO outside a chunk.
+    constexpr size_t kMaxReports = 32;
+    if (!inChunk_ || !warn_ || reportedUnmapped_.size() > kMaxReports)
+        return;
+    if (!reportedUnmapped_.insert((addr & ~3u) | (write ? 1u : 0u)).second)
+        return;
+    char msg[128];
+    if (reportedUnmapped_.size() > kMaxReports) {
+        std::snprintf(msg, sizeof(msg), "more accesses to unemulated peripherals are not reported");
+    } else {
+        const char *name = periphName(addr);
+        std::snprintf(msg, sizeof(msg), "%s unemulated peripheral %s%s@ 0x%08X (%s)",
+                      write ? "write to" : "read from", name ? name : "", name ? " " : "", addr,
+                      write ? "value dropped" : "reads as 0");
+    }
+    warn_(msg);
 }
 
 void Machine::setUartTx(UartTx cb) {

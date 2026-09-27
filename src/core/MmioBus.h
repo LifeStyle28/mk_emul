@@ -26,6 +26,9 @@ public:
     // The bus is mapped over the alias regions too; SRAM bits go through these accessors.
     void setMemoryAccess(std::function<uint32_t(uint32_t)> read32, std::function<void(uint32_t, uint32_t)> write32);
 
+    // Called on an access that no peripheral covers (reads as 0, writes are dropped).
+    void setUnmappedHook(std::function<void(uint32_t addr, bool write)> hook) { unmapped_ = std::move(hook); }
+
 private:
     uint32_t bitbandRead(uint32_t alias);
     void bitbandWrite(uint32_t alias, uint32_t value);
@@ -35,4 +38,5 @@ private:
     std::vector<Peripheral *> items_;
     std::function<void()> beforeAccess_;
     std::function<void()> afterWrite_;
+    std::function<void(uint32_t, bool)> unmapped_;
 };

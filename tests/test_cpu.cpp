@@ -94,6 +94,29 @@ TEST_F(MachineTest, BreakpointStopsBeforeTheInstruction) {
     EXPECT_EQ(m.runQuantum(100), CpuEngine::StopReason::Quantum);
 }
 
+// 0x40: ldr r1,=0x40026010 (DMA1, not emulated) ; str r0,[r1] ; ldr r2,[r1] ; str r0,[r1] ; b .
+TEST_F(MachineTest, WarnsOnceAboutUnemulatedPeripheral) {
+    std::vector<std::string> warnings;
+    m.setWarningSink([&](const std::string &w) { warnings.push_back(w); });
+    FlashImage img;
+    img.word(F, kStackTop).vector(1, F + 0x40);
+    img.thumb(F + 0x40, {0x4902, 0x6008, 0x680A, 0x6008, 0xE7FE});
+    img.word(F + 0x4C, 0x40026010u);
+    loadImage(m, img);
+    m.runQuantum(100);
+    ASSERT_EQ(warnings.size(), 2u);
+    EXPECT_EQ(warnings[0], "write to unemulated peripheral DMA1 @ 0x40026010 (value dropped)");
+    EXPECT_EQ(warnings[1], "read from unemulated peripheral DMA1 @ 0x40026010 (reads as 0)");
+
+    uint8_t buf[16];
+    m.readMemory(0x40026000u, buf, sizeof(buf)); // UI memory view, not firmware
+    EXPECT_EQ(warnings.size(), 2u) << "memory panel reads must not warn";
+
+    m.reset(); // a new run reports again
+    m.runQuantum(100);
+    EXPECT_EQ(warnings.size(), 4u);
+}
+
 // Regression: timers used to advance by the whole quantum even when the CPU stopped early.
 TEST_F(MachineTest, TimersAdvanceOnlyByExecutedInstructions) {
     loadImage(m, loopImage());

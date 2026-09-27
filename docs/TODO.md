@@ -3,7 +3,7 @@
 Состояние на 27.09.2026 (ветка `my-version`). Сделанное — в [CHANGELOG.md](../CHANGELOG.md).
 Уже работает и проверено: ядро Cortex-M4 (прерывания, приоритеты, SVC/PendSV, FPU, CPACR/NOCP,
 PSP и непривилегированный режим), таймеры, UART, EXTI, режим реального времени, весь ручной
-чек-лист `docs/MANUAL_TESTING.md`, проект на STM32CubeF4 HAL `examples/hal_blinky`, FreeRTOS `examples/freertos`, ШИМ на TIM4 `examples/tim4_pwm` (90 автотестов).
+чек-лист `docs/MANUAL_TESTING.md`, проект на STM32CubeF4 HAL `examples/hal_blinky`, FreeRTOS `examples/freertos`, ШИМ на TIM4 `examples/tim4_pwm` (91 автотест).
 
 ## 1. Проверить на «настоящих» прошивках (главный риск)
 - [x] **Проект на STM32CubeF4 HAL** — `examples/hal_blinky`, тесты `HalFirmwareTest.*`
@@ -23,9 +23,9 @@ PSP и непривилегированный режим), таймеры, UART,
 - [x] **TIM4 и ШИМ** на PD12–PD15 — `examples/tim4_pwm`, яркость светодиода = скважность.
       Добавлены TIM4 и TIM5. Не сделано: TIM1/TIM8 (нужны BDTR.MOE и APB2), флаги CCxIF и
       прерывания по сравнению, режимы toggle/match, preload CCR/ARR (запись действует сразу).
-- [ ] **Предупреждение об обращении к неэмулируемой периферии** (DMA, TIM1, TIM6–14, CAN, …): сейчас
-      чтение даёт 0, запись теряется без следа. Показывать в статусе/логе
-      «write to unemulated peripheral @ 0x40001000» (один раз на адрес).
+- [x] **Предупреждение об обращении к неэмулируемой периферии** — в панели Build log:
+      «emulator warning: write to unemulated peripheral DMA1 @ 0x40026010 (value dropped)».
+      Не ловится: нереализованный регистр внутри эмулируемого блока (например, TIMx->BDTR).
 - [ ] Непривилегированный код может обращаться к NVIC/SCB и периферии; на МК это BusFault.
 - [ ] FPDSCR хранится, но не применяется к новому FP-контексту (редкий случай).
 

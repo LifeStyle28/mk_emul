@@ -46,6 +46,7 @@ signals:
     void statusChanged(const QString &text);
     void runStateChanged(bool running);
     void speedMeasured(double speed); // emulated/real time ratio
+    void warning(const QString &text);
 
 private:
     void emitSnap(bool force);

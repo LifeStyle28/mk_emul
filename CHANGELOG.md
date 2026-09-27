@@ -501,6 +501,21 @@ float-цикла (проверка FPU-контекста задач и lazy sta
 `TimerFixture.LongTickWrapsLikeSingleSteps`, `Timer.SixteenBitTimersMaskCounterRegisters`.
 Итого 90 тестов.
 
+## Предупреждение об обращении к неэмулируемой периферии
+
+Раньше чтение из блока, которого нет в эмуляторе (DMA, TIM1, TIM6–14, CAN, DWT, …), давало 0,
+а запись терялась без следа: прошивка «не работает», а причина не видна. Теперь в панели
+Build log появляется, например,
+`emulator warning: write to unemulated peripheral DMA1 @ 0x40026010 (value dropped)`
+(блок называется по карте памяти RM0090). Сообщение выдаётся один раз на регистр и
+направление (чтение/запись), не больше 32 штук, счётчик сбрасывается при Reset и загрузке
+прошивки. Чтения из панели Memory не считаются — только обращения кода прошивки.
+
+Реализация: `MmioBus::setUnmappedHook`, `Machine::setWarningSink` / `onUnmappedAccess`,
+сигнал `MachineWorker::warning`. Тесты: `MachineTest.WarnsOnceAboutUnemulatedPeripheral`;
+кроме того, `FirmwareTest::TearDown` проверяет, что ни один пример (включая HAL и FreeRTOS)
+не трогает неэмулируемую периферию. Итого 91 тест.
+
 ## Известные ограничения (кандидаты на доработку)
 
 - Непривилегированный код может обращаться к NVIC/SCB и периферии; на настоящем МК обращение к

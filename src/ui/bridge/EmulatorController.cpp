@@ -27,6 +27,7 @@ void MachineWorker::initialize() {
     disasm_.open(nullptr);
     clock_.start();
     machine_.setUartTx([this](uint8_t b) { uartBuf_.append(static_cast<char>(b)); });
+    machine_.setWarningSink([this](const std::string &text) { emit warning(QString::fromStdString(text)); });
     emit inited(true, {});
     emitSnap(true);
     requestDisasm();
@@ -180,6 +181,13 @@ EmulatorController::EmulatorController(QObject *parent)
         emit statusChanged();
     });
     connect(worker_, &MachineWorker::snapshotReady, this, &EmulatorController::applySnapshot);
+    // Emulator warnings (e.g. access to an unemulated peripheral) go to the build log panel.
+    connect(worker_, &MachineWorker::warning, this, [this](const QString &text) {
+        if (!buildLog_.isEmpty() && !buildLog_.endsWith('\n'))
+            buildLog_ += '\n';
+        buildLog_ += QStringLiteral("emulator warning: ") + text + '\n';
+        emit buildLogChanged();
+    });
     connect(worker_, &MachineWorker::statusChanged, this, [this](const QString &s) {
         status_ = s;
         emit statusChanged();

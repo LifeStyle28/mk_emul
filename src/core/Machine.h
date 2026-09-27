@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -87,6 +88,10 @@ public:
 
     using UartTx = std::function<void(uint8_t)>;
     void setUartTx(UartTx cb);
+    // Firmware accessed a peripheral that is not emulated (reads 0, writes are dropped):
+    // "write to unemulated peripheral DMA1 @ 0x40026010", once per register until reset.
+    using WarningSink = std::function<void(const std::string &)>;
+    void setWarningSink(WarningSink cb) { warn_ = std::move(cb); }
 
     const std::string &status() const { return status_; }
     bool firmwareLoaded() const { return firmwareLoaded_; }
@@ -95,6 +100,7 @@ public:
 private:
     void wirePeripherals();
     void onGpioPin(int port, uint16_t odr, uint16_t idr);
+    void onUnmappedAccess(uint32_t addr, bool write);
     void applyResetCpu();
     LoadedImage applyImage(LoadedImage img, const std::string &name);
     void tickPeripherals(uint32_t insns);
@@ -142,5 +148,7 @@ private:
     uint32_t vectorBase_ = mcu::kFlashBase;
     std::string status_ = "Idle";
     UartTx uartTx_;
+    WarningSink warn_;
+    std::set<uint32_t> reportedUnmapped_; // register address | 1 for writes, already warned about
     uint16_t lastGpioIdr_[9]{};
 };
