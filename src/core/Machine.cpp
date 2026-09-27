@@ -4,6 +4,8 @@
 
 #include <unicorn/arm.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 
 Machine::Machine()
@@ -77,8 +79,14 @@ void Machine::wirePeripherals() {
             if ((exc & 0xFFFFFF00u) != 0xFFFFFF00u)
                 exc = cpu_.lr();
             nvic_.exitException(cpu_, exc);
+        } else if (intno == 2) { // EXCP_SWI: SVC instruction, PC already points past it
+            if (!nvic_.raiseSvc(cpu_)) {
+                svcLockup_ = true;
+                cpu_.stop();
+            }
         }
     });
+    cpu_.setInterruptPoll(nvic_.pendingFlag(), [this] { return nvic_.wouldPreempt(cpu_); });
 }
 
 bool Machine::initialize(std::string *error) {
@@ -91,6 +99,12 @@ bool Machine::initialize(std::string *error) {
 }
 
 void Machine::reset() {
+    resetMcu();
+    cpu_.resetInstructionCount();
+    status_ = "Reset";
+}
+
+void Machine::resetMcu() {
     rcc_.reset();
     nvic_.reset();
     systick_.reset();
@@ -114,9 +128,8 @@ void Machine::reset() {
     buttonPressed_ = false;
     std::memset(lastGpioIdr_, 0, sizeof(lastGpioIdr_));
     nvic_.write32(0xE000ED08u, vectorBase_); // VTOR -> loaded image
-    cpu_.resetInstructionCount();
+    svcLockup_ = false;
     applyResetCpu();
-    status_ = "Reset";
 }
 
 void Machine::applyResetCpu() {
@@ -236,42 +249,67 @@ void Machine::deliverFault() {
     }
 }
 
-CpuEngine::StopReason Machine::step() {
-    auto r = cpu_.run(1);
+uint32_t Machine::cyclesToNextEvent() const {
+    const uint32_t sys = rcc_.sysclk();
+    const uint64_t c = std::min({systick_.cyclesUntilInterrupt(sys), tim2_.cyclesUntilInterrupt(sys),
+                                 tim3_.cyclesUntilInterrupt(sys)});
+    return c > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(c);
+}
+
+CpuEngine::StopReason Machine::runChunk(uint32_t n) {
+    const auto r = cpu_.run(n);
     tickPeripherals(static_cast<uint32_t>(cpu_.lastRunCount()));
+    if (svcLockup_) {
+        svcLockup_ = false;
+        status_ = "Lockup: SVC inside HardFault/NMI";
+        return CpuEngine::StopReason::Fault;
+    }
     if (r == CpuEngine::StopReason::Fault) {
         deliverFault();
         return r;
     }
+    if (nvic_.takeResetRequest()) {
+        resetMcu(); // like the real MCU: restart from the reset vector, SRAM keeps its contents
+        return CpuEngine::StopReason::Quantum;
+    }
     nvic_.service(cpu_);
-    if (r == CpuEngine::StopReason::Breakpoint)
-        status_ = "Breakpoint";
-    else
-        status_ = "Paused";
+    return r;
+}
+
+CpuEngine::StopReason Machine::step() {
+    const auto r = runChunk(1);
+    if (r == CpuEngine::StopReason::Fault)
+        return r;
+    status_ = r == CpuEngine::StopReason::Breakpoint ? "Breakpoint" : "Paused";
     return r;
 }
 
 CpuEngine::StopReason Machine::runQuantum(uint32_t insns) {
+    // Timers/CNT are updated between chunks, so keep chunks short; they also end exactly when
+    // SysTick/TIM pend an interrupt, and the CPU stops early on its own when one becomes
+    // pending from code (see CpuEngine::setInterruptPoll), so interrupt latency is exact.
     constexpr uint32_t kChunk = 256;
     uint32_t left = insns;
+    int idle = 0;
     CpuEngine::StopReason last = CpuEngine::StopReason::Quantum;
     while (left > 0) {
-        const uint32_t n = left > kChunk ? kChunk : left;
-        last = cpu_.run(n);
-        tickPeripherals(static_cast<uint32_t>(cpu_.lastRunCount()));
-        if (last == CpuEngine::StopReason::Fault) {
-            deliverFault();
+        const uint32_t n = std::max(1u, std::min({left, kChunk, cyclesToNextEvent()}));
+        last = runChunk(n);
+        if (last == CpuEngine::StopReason::Fault)
             return last;
-        }
-        nvic_.service(cpu_);
         if (last == CpuEngine::StopReason::Breakpoint)
             break;
-        left -= n;
+        const uint32_t done = static_cast<uint32_t>(cpu_.lastRunCount());
+        if (done == 0) {
+            // Stopped before the first instruction to take an interrupt (runChunk entered it).
+            if (++idle > 4)
+                break; // safety net: never spin without progress
+            continue;
+        }
+        idle = 0;
+        left -= std::min(left, done);
     }
-    if (last == CpuEngine::StopReason::Breakpoint)
-        status_ = "Breakpoint";
-    else
-        status_ = "Running";
+    status_ = last == CpuEngine::StopReason::Breakpoint ? "Breakpoint" : "Running";
     return last;
 }
 

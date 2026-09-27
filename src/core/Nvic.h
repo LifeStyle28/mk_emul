@@ -38,6 +38,19 @@ public:
     uint32_t hfsr() const { return hfsr_; }
     uint32_t bfar() const { return bfar_; }
 
+    // Execution priority of the running code (current exception, BASEPRI, PRIMASK, FAULTMASK);
+    // lower is more urgent, 256 = thread mode with nothing masked.
+    int executionPriority(CpuEngine &cpu) const;
+    // True if the highest pending enabled exception would preempt the running code now.
+    bool wouldPreempt(CpuEngine &cpu) const;
+    // Cheap flag for the CPU's per-instruction hook: some enabled exception is pending.
+    const bool *pendingFlag() const { return &pendingEnabled_; }
+    // SVC instruction executed: enters SVCall, or HardFault if SVCall cannot be taken now.
+    // Returns the exception entered, 0 on lockup.
+    int raiseSvc(CpuEngine &cpu);
+    // SYSRESETREQ was written to AIRCR (NVIC_SystemReset); returns and clears the request.
+    bool takeResetRequest();
+
     uint32_t vtor() const { return vtor_; }
     int currentException() const { return currentException_; }
 
@@ -48,6 +61,8 @@ public:
 private:
     int highestPending() const;
     int priorityOf(int exceptionNumber) const;
+    int groupPriority(int priority) const; // preemption part per AIRCR.PRIGROUP
+    void updatePendingFlag();
     bool enabled(int exceptionNumber) const;
     bool pending(int exceptionNumber) const;
     void setPendingBit(int exceptionNumber, bool on);
@@ -72,6 +87,8 @@ private:
     uint32_t bfar_ = 0;
     uint32_t cpuId_ = 0x410FC241u; // Cortex-M4 r0p1
     int currentException_ = 0;
+    bool pendingEnabled_ = false;
+    bool resetRequested_ = false;
     uint32_t systickPending_ : 1;
     uint32_t pendsvPending_ : 1;
     uint32_t nmiPending_ : 1;

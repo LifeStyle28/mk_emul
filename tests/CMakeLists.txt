@@ -7,6 +7,8 @@ add_executable(mk_emul_tests
     test_firmware.cpp
     test_disasm.cpp
     test_pacer.cpp
+    test_nvic.cpp
+    cortex_programs.inc
 )
 set_target_properties(mk_emul_tests PROPERTIES AUTOMOC OFF AUTORCC OFF)
 target_link_libraries(mk_emul_tests PRIVATE mk_emul_core GTest::gtest_main)

@@ -20,6 +20,8 @@ public:
     uint32_t partialWriteBase(uint32_t addr) override;
     void tick(uint32_t cycles, uint32_t sysclk) override;
     void reset() override;
+    // CPU cycles until the update interrupt would be pended; UINT64_MAX if it cannot be.
+    uint64_t cyclesUntilInterrupt(uint32_t sysclk) const;
 
     uint32_t cnt() const { return cnt_; }
     uint32_t arr() const { return arr_; }

@@ -31,7 +31,7 @@ class FlashImage {
 public:
     static constexpr uint32_t kBase = 0x08000000u;
 
-    FlashImage() : bytes_(0x100, 0) {}
+    FlashImage() : bytes_(0x200, 0) {}
 
     FlashImage &word(uint32_t addr, uint32_t v) {
         for (int i = 0; i < 4; ++i)
@@ -41,6 +41,14 @@ public:
     // Consecutive 16-bit Thumb instructions starting at addr.
     FlashImage &thumb(uint32_t addr, std::initializer_list<uint16_t> insns) {
         for (uint16_t op : insns) {
+            at(addr) = static_cast<uint8_t>(op);
+            at(addr + 1) = static_cast<uint8_t>(op >> 8);
+            addr += 2;
+        }
+        return *this;
+    }
+    FlashImage &code(uint32_t addr, const std::vector<uint16_t> &halfwords) {
+        for (uint16_t op : halfwords) {
             at(addr) = static_cast<uint8_t>(op);
             at(addr + 1) = static_cast<uint8_t>(op >> 8);
             addr += 2;

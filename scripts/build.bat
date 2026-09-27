@@ -18,6 +18,11 @@ if not defined VCVARS (
     exit /b 1
 )
 
+rem Localized MSVC prints "Note: including file:" translated, in the console code page. CMake
+rem stores that prefix for Ninja as UTF-8, so with an OEM code page Ninja cannot match it, header
+rem dependencies are lost and stale objects get linked. Use UTF-8 (and English if installed).
+chcp 65001 >nul
+set VSLANG=1033
 call "%VCVARS%" >nul || exit /b 1
 cd /d "%~dp0.."
 if not exist build\build.ninja (

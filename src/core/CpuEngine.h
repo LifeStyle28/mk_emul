@@ -45,6 +45,8 @@ public:
     uint32_t control() const;
     uint32_t ipsr() const;
     uint32_t primask() const;
+    uint32_t basepri() const;
+    uint32_t faultmask() const;
     void setPc(uint32_t value);
     void setSp(uint32_t value);
     void setLr(uint32_t value);
@@ -72,6 +74,10 @@ public:
     using InterruptHandler = std::function<void(uint32_t intno)>;
     void setInterruptHandler(InterruptHandler handler);
 
+    // Called before each instruction while *pendingFlag is true; returning true stops the run so
+    // the caller can take the interrupt right away (instead of at the end of the chunk).
+    void setInterruptPoll(const bool *pendingFlag, std::function<bool()> shouldStop);
+
     using FaultHandler = std::function<void(const std::string &msg, uint32_t addr)>;
     void setFaultHandler(FaultHandler handler);
 
@@ -90,6 +96,8 @@ private:
 
     uc_engine *uc_ = nullptr;
     InterruptHandler onInterrupt_;
+    const bool *irqPendingFlag_ = nullptr;
+    std::function<bool()> irqShouldStop_;
     FaultHandler onFault_;
     std::unordered_set<uint32_t> breakpoints_;
     uint64_t codeHook_ = 0;

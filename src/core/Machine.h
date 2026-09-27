@@ -97,6 +97,12 @@ private:
     LoadedImage applyImage(LoadedImage img, const std::string &name);
     void tickPeripherals(uint32_t insns);
     void deliverFault();
+    void resetMcu(); // peripherals, NVIC, CPU; keeps RAM and the instruction counter
+    // Runs up to n instructions, then advances timers and takes faults, SVC lockup,
+    // NVIC_SystemReset and pending interrupts.
+    CpuEngine::StopReason runChunk(uint32_t n);
+    // Instructions until SysTick/TIM would pend an interrupt, so chunks end exactly there.
+    uint32_t cyclesToNextEvent() const;
 
     CpuEngine cpu_;
     MmioBus bus_;
@@ -123,6 +129,7 @@ private:
 
     bool buttonPressed_ = false;
     bool firmwareLoaded_ = false;
+    bool svcLockup_ = false;
     uint32_t vectorBase_ = mcu::kFlashBase;
     std::string status_ = "Idle";
     UartTx uartTx_;

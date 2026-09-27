@@ -4,6 +4,7 @@
 #include "periph/Rcc.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 Timer::Timer(const char *name, uint32_t base, int irq, int timIndex, Rcc *rcc, IrqTarget *nvic)
@@ -152,6 +153,24 @@ void Timer::write32(uint32_t addr, uint32_t value) {
         break;
     }
     updateIrq();
+}
+
+uint64_t Timer::cyclesUntilInterrupt(uint32_t sysclk) const {
+    if ((cr1_ & 1u) == 0 || (dier_ & 1u) == 0)
+        return UINT64_MAX;
+    if (rcc_ && !rcc_->timEnabled(timIndex_))
+        return UINT64_MAX;
+    const double tclk = timerClock(sysclk);
+    const double hclk = rcc_ ? rcc_->hclk() : sysclk;
+    const double div = static_cast<double>(psc_) + 1.0;
+    const uint32_t top = arr_ ? arr_ : 0xFFFFu;
+    // Mirrors tick(): overflow happens on the step taken while CNT >= top.
+    const double steps = cnt_ >= top ? 1.0 : static_cast<double>(top - cnt_) + 1.0;
+    const double need = steps * hclk * div - static_cast<double>(frac_);
+    const double cycles = std::ceil(need / (tclk > 0 ? tclk : 1.0));
+    if (cycles > 1e12)
+        return UINT64_MAX;
+    return cycles < 1.0 ? 1 : static_cast<uint64_t>(cycles);
 }
 
 void Timer::tick(uint32_t cycles, uint32_t sysclk) {

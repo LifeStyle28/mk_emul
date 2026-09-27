@@ -154,6 +154,8 @@ uint32_t CpuEngine::psp() const { return reg(UC_ARM_REG_PSP); }
 uint32_t CpuEngine::control() const { return reg(UC_ARM_REG_CONTROL); }
 uint32_t CpuEngine::ipsr() const { return xpsr() & 0x1FFu; }
 uint32_t CpuEngine::primask() const { return reg(UC_ARM_REG_PRIMASK); }
+uint32_t CpuEngine::basepri() const { return reg(UC_ARM_REG_BASEPRI); }
+uint32_t CpuEngine::faultmask() const { return reg(UC_ARM_REG_FAULTMASK); }
 
 void CpuEngine::setPc(uint32_t value) { setReg(UC_ARM_REG_PC, value); }
 void CpuEngine::setSp(uint32_t value) { setReg(UC_ARM_REG_SP, value); }
@@ -232,6 +234,13 @@ void CpuEngine::installHooks() {
                         uc_emu_stop(uc);
                         return;
                     }
+                    // An enabled interrupt became pending (MMIO write, CPSIE, BASEPRI, return from
+                    // another handler): stop before this instruction if it can preempt now.
+                    if (cpu->irqPendingFlag_ && *cpu->irqPendingFlag_ && cpu->irqShouldStop_ &&
+                        cpu->irqShouldStop_()) {
+                        uc_emu_stop(uc);
+                        return;
+                    }
                     if (!cpu->breakpoints_.empty() &&
                         cpu->breakpoints_.count(static_cast<uint32_t>(address) & ~1u)) {
                         if (!cpu->skipNextBreakpoint_) {
@@ -266,6 +275,11 @@ std::vector<uint32_t> CpuEngine::breakpoints() const {
     std::vector<uint32_t> v(breakpoints_.begin(), breakpoints_.end());
     std::sort(v.begin(), v.end());
     return v;
+}
+
+void CpuEngine::setInterruptPoll(const bool *pendingFlag, std::function<bool()> shouldStop) {
+    irqPendingFlag_ = pendingFlag;
+    irqShouldStop_ = std::move(shouldStop);
 }
 
 void CpuEngine::setInterruptHandler(InterruptHandler handler) { onInterrupt_ = std::move(handler); }

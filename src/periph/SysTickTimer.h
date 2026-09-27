@@ -19,6 +19,8 @@ public:
     void write32(uint32_t addr, uint32_t value) override;
     uint32_t partialWriteBase(uint32_t addr) override;
     void tick(uint32_t cycles, uint32_t sysclk) override;
+    // CPU cycles until the SysTick exception would be pended; UINT64_MAX if it cannot be.
+    uint64_t cyclesUntilInterrupt(uint32_t sysclk) const;
     void reset() override;
 
     uint32_t ctrl() const { return ctrl_; }

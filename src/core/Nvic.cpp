@@ -39,6 +39,8 @@ void Nvic::reset() {
     mmfar_ = 0;
     bfar_ = 0;
     currentException_ = 0;
+    pendingEnabled_ = false;
+    resetRequested_ = false;
     systickPending_ = 0;
     pendsvPending_ = 0;
     nmiPending_ = 0;
@@ -70,6 +72,7 @@ void Nvic::setPendingBit(int exceptionNumber, bool on) {
         else
             ispr_[word] &= ~(1u << bit);
     }
+    updatePendingFlag();
 }
 
 bool Nvic::pending(int exceptionNumber) const {
@@ -94,8 +97,12 @@ bool Nvic::enabled(int exceptionNumber) const {
 }
 
 int Nvic::priorityOf(int exceptionNumber) const {
-    if (exceptionNumber < 4)
-        return -3;
+    if (exceptionNumber == 1)
+        return -3; // Reset
+    if (exceptionNumber == 2)
+        return -2; // NMI
+    if (exceptionNumber == 3)
+        return -1; // HardFault
     if (exceptionNumber < 16) {
         const int idx = exceptionNumber - 4;
         if (idx >= 0 && idx < 12)
@@ -106,6 +113,41 @@ int Nvic::priorityOf(int exceptionNumber) const {
     if (irq >= 0 && irq < 240)
         return ipr_[irq];
     return 0;
+}
+
+int Nvic::groupPriority(int priority) const {
+    if (priority < 0)
+        return priority;
+    // PRIGROUP = n: bits [7:n+1] are the group (preemption) priority, the rest is subpriority.
+    const uint32_t prigroup = (aircr_ >> 8) & 7u;
+    const uint32_t mask = (0xFFu << (prigroup + 1)) & 0xFFu;
+    return static_cast<int>(static_cast<uint32_t>(priority) & mask);
+}
+
+void Nvic::updatePendingFlag() {
+    bool any = nmiPending_ || pendsvPending_ || systickPending_;
+    for (size_t i = 0; !any && i < ispr_.size(); ++i)
+        any = (ispr_[i] & iser_[i]) != 0;
+    pendingEnabled_ = any;
+}
+
+int Nvic::executionPriority(CpuEngine &cpu) const {
+    int pri = 256;
+    if (currentException_ != 0)
+        pri = groupPriority(priorityOf(currentException_));
+    const int basepri = static_cast<int>(cpu.basepri() & 0xFFu);
+    if (basepri != 0)
+        pri = std::min(pri, groupPriority(basepri));
+    if (cpu.primask() & 1u)
+        pri = std::min(pri, 0); // only NMI and HardFault
+    if (cpu.faultmask() & 1u)
+        pri = std::min(pri, -1); // only NMI
+    return pri;
+}
+
+bool Nvic::wouldPreempt(CpuEngine &cpu) const {
+    const int cand = highestPending();
+    return cand != 0 && groupPriority(priorityOf(cand)) < executionPriority(cpu);
 }
 
 int Nvic::highestPending() const {
@@ -267,11 +309,10 @@ int Nvic::raiseFault(CpuEngine &cpu, FaultType type, uint32_t address) {
         break;
     }
 
-    const int curPri = currentException_ ? priorityOf(currentException_) : 256;
     if (exc != 3) {
         // Configurable fault that is disabled, masked or not higher priority than the
         // current context escalates to HardFault.
-        if (!(shcsr_ & enableBit) || cpu.primask() != 0 || priorityOf(exc) >= curPri)
+        if (!(shcsr_ & enableBit) || groupPriority(priorityOf(exc)) >= executionPriority(cpu))
             exc = 3;
     }
     if (exc == 3) {
@@ -288,19 +329,31 @@ int Nvic::raiseFault(CpuEngine &cpu, FaultType type, uint32_t address) {
     return exc;
 }
 
-void Nvic::service(CpuEngine &cpu) {
-    if (cpu.primask() != 0)
-        return;
-    const int cand = highestPending();
-    if (cand == 0)
-        return;
-    if (currentException_ != 0) {
-        const int curPri = priorityOf(currentException_);
-        const int newPri = priorityOf(cand);
-        if (newPri >= curPri)
-            return;
+int Nvic::raiseSvc(CpuEngine &cpu) {
+    int exc = 11; // SVCall
+    if (groupPriority(priorityOf(exc)) >= executionPriority(cpu)) {
+        // SVC with SVCall masked or not higher priority than the current context -> HardFault.
+        if (currentException_ == 2 || currentException_ == 3)
+            return 0;
+        hfsr_ |= 1u << 30; // FORCED
+        exc = 3;
     }
-    enterException(cpu, cand);
+    const uint32_t handler = vectorAddress(exc);
+    if (handler == 0 || handler == 0xFFFFFFFFu)
+        return 0;
+    enterException(cpu, exc);
+    return exc;
+}
+
+bool Nvic::takeResetRequest() {
+    const bool r = resetRequested_;
+    resetRequested_ = false;
+    return r;
+}
+
+void Nvic::service(CpuEngine &cpu) {
+    if (wouldPreempt(cpu))
+        enterException(cpu, highestPending());
 }
 
 uint32_t Nvic::debugIcsr() const {
@@ -390,6 +443,7 @@ void Nvic::write32(uint32_t addr, uint32_t value) {
             pendsvPending_ = 1;
         if (value & (1u << 31))
             nmiPending_ = 1;
+        updatePendingFlag();
         return;
     }
     if (addr == 0xE000ED08u) {
@@ -397,9 +451,13 @@ void Nvic::write32(uint32_t addr, uint32_t value) {
         return;
     }
     if (addr == 0xE000ED0Cu) {
-        aircr_ = (value & 0xFFFFu) | 0xFA050000u;
-        if ((value & 0x04u) && ((value >> 16) == 0x05FAu)) {
-            // SYSRESETREQ — Machine handles via halt? ignore, user clicks Reset
+        if ((value >> 16) != 0x05FAu)
+            return; // writes without VECTKEY are ignored
+        aircr_ = 0xFA050000u | (value & 0x700u); // PRIGROUP
+        if (value & 0x4u) {                    // SYSRESETREQ (NVIC_SystemReset)
+            resetRequested_ = true;
+            if (cpu_)
+                cpu_->stop();
         }
         return;
     }
@@ -438,7 +496,7 @@ void Nvic::write32(uint32_t addr, uint32_t value) {
     if (addr >= 0xE000ED18u && addr < 0xE000ED24u) {
         const uint32_t off = addr - 0xE000ED18u;
         for (int i = 0; i < 4; ++i)
-            shpr_[off + i] = static_cast<uint8_t>((value >> (8 * i)) & 0xFFu);
+            shpr_[off + i] = static_cast<uint8_t>((value >> (8 * i)) & 0xF0u); // 4 priority bits
         return;
     }
     if (addr >= 0xE000E100u && addr < 0xE000E120u)
@@ -452,6 +510,7 @@ void Nvic::write32(uint32_t addr, uint32_t value) {
     else if (addr >= 0xE000E400u && addr < 0xE000E4F0u) {
         const uint32_t off = addr - 0xE000E400u;
         for (int i = 0; i < 4; ++i)
-            ipr_[off + i] = static_cast<uint8_t>((value >> (8 * i)) & 0xFFu);
+            ipr_[off + i] = static_cast<uint8_t>((value >> (8 * i)) & 0xF0u); // 4 priority bits
     }
+    updatePendingFlag(); // ISER/ICER/ISPR/ICPR may have changed
 }
