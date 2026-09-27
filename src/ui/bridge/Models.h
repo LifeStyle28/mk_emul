@@ -30,6 +30,10 @@ class MemoryModel : public QAbstractListModel {
     Q_PROPERTY(quint32 address READ address WRITE setAddress NOTIFY addressChanged)
 public:
     enum Roles { AddrRole = Qt::UserRole + 1, HexRole, AsciiRole };
+    static constexpr int kMemoryBytes = 256; // one requestMemory() window
+    // 8, not 16: a 16-byte row (47 hex + 16 ASCII chars) does not fit the Memory panel width,
+    // the hex column overflowed under the ASCII one.
+    static constexpr int kMemoryBytesPerRow = 8;
     explicit MemoryModel(QObject *parent = nullptr);
 
     int rowCount(const QModelIndex &parent = {}) const override;

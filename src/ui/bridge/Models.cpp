@@ -44,23 +44,23 @@ void RegisterModel::update(const QVector<QPair<QString, QString>> &rows) {
 
 MemoryModel::MemoryModel(QObject *parent)
     : QAbstractListModel(parent)
-    , data_(256, 0) {}
+    , data_(kMemoryBytes, 0) {}
 
 int MemoryModel::rowCount(const QModelIndex &parent) const {
-    return parent.isValid() ? 0 : 16;
+    return parent.isValid() ? 0 : kMemoryBytes / kMemoryBytesPerRow;
 }
 
 QVariant MemoryModel::data(const QModelIndex &index, int role) const {
     if (!index.isValid())
         return {};
     const int row = index.row();
-    const quint32 addr = address_ + static_cast<quint32>(row * 16);
+    const quint32 addr = address_ + static_cast<quint32>(row * kMemoryBytesPerRow);
     if (role == AddrRole)
         return QStringLiteral("0x") + QString("%1").arg(addr, 8, 16, QChar('0')).toUpper();
     QString hex;
     QString ascii;
-    for (int i = 0; i < 16; ++i) {
-        const int off = row * 16 + i;
+    for (int i = 0; i < kMemoryBytesPerRow; ++i) {
+        const int off = row * kMemoryBytesPerRow + i;
         const auto b = static_cast<unsigned char>(off < data_.size() ? data_[off] : 0);
         hex += QString("%1 ").arg(b, 2, 16, QChar('0')).toUpper();
         ascii += (b >= 32 && b < 127) ? QChar(b) : QChar('.');

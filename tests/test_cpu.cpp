@@ -55,6 +55,8 @@ TEST_F(MachineTest, ResetLoadsSpAndPcFromVectorTable) {
     EXPECT_EQ(m.cpu().sp(), kStackTop);
     EXPECT_EQ(m.cpu().pc(), F + 0x40);
     EXPECT_EQ(ipsr(), 0u);
+    // Found by the UI checklist: the register panel showed xPSR = 0 after reset.
+    EXPECT_EQ(m.cpu().xpsr(), 0x01000000u) << "EPSR.T set, as after a real reset";
 }
 
 TEST_F(MachineTest, CountsExactlyTheExecutedInstructions) {

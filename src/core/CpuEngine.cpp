@@ -104,6 +104,19 @@ bool CpuEngine::isFpInstruction(uint32_t addr) const {
     return (hw1 & 0xEC00u) == 0xEC00u && (hw2 & 0x0E00u) == 0x0A00u;
 }
 
+// Kept out of the per-instruction hook: a local char array there makes MSVC add a /GS stack
+// cookie check to every instruction (measured: ~8% slower emulation).
+MK_NOINLINE void CpuEngine::reportNoCoprocessor(uint32_t addr) {
+    lastStop_ = StopReason::Fault;
+    faultKind_ = FaultKind::NoCoprocessor;
+    faultAddress_ = addr;
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "FPU disabled (CPACR) @ 0x%08X", static_cast<unsigned>(addr));
+    lastError_ = buf;
+    if (onFault_)
+        onFault_(lastError_, faultAddress_);
+}
+
 bool CpuEngine::fpAccessAllowed() const {
     if (fpAccess_ == 3)
         return true;
@@ -319,15 +332,7 @@ void CpuEngine::installHooks() {
                     // FPU not enabled in CPACR: NOCP UsageFault before the FP instruction runs.
                     if (cpu->fpAccess_ != 3 && size == 4 && cpu->isFpInstruction(static_cast<uint32_t>(address)) &&
                         !cpu->fpAccessAllowed()) {
-                        cpu->lastStop_ = StopReason::Fault;
-                        cpu->faultKind_ = FaultKind::NoCoprocessor;
-                        cpu->faultAddress_ = static_cast<uint32_t>(address);
-                        char buf[64];
-                        std::snprintf(buf, sizeof(buf), "FPU disabled (CPACR) @ 0x%08X",
-                                      static_cast<unsigned>(address));
-                        cpu->lastError_ = buf;
-                        if (cpu->onFault_)
-                            cpu->onFault_(cpu->lastError_, cpu->faultAddress_);
+                        cpu->reportNoCoprocessor(static_cast<uint32_t>(address));
                         uc_emu_stop(uc);
                         return;
                     }

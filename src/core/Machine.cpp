@@ -143,13 +143,14 @@ void Machine::applyResetCpu() {
     const uint32_t sp = cpu_.read32(table);
     const uint32_t pc = cpu_.read32(table + 4);
     // Order matters (see Nvic::enterException): privileged first, then thread mode with
-    // CONTROL = 0 (MSP active), then the stack pointers.
+    // CONTROL = 0 (MSP active), then the stack pointers. PC before xPSR: Unicorn takes the Thumb
+    // bit from bit 0 of a PC write, so writing an even PC afterwards would clear EPSR.T.
     cpu_.setNPriv(false);
+    cpu_.setPc(pc & ~1u);
     cpu_.setXpsr(0x01000000u); // Thumb, thread mode
     cpu_.setControl(0);
     cpu_.setMsp(sp);
     cpu_.setPsp(sp);
-    cpu_.setPc(pc & ~1u);
     cpu_.setLr(0xFFFFFFFFu);
     cpu_.setPrimask(0);
     for (int i = 0; i < 13; ++i)

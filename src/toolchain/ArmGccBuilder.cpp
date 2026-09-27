@@ -77,8 +77,13 @@ bool ArmGccBuilder::compile(const QVector<QPair<QString, QString>> &files, const
             return false;
         }
         accumulated += QString::fromUtf8(p.readAll());
-        if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0) {
-            accumulated += QString("gcc exit %1 (%2)\n").arg(p.exitCode()).arg(p.errorString());
+        if (p.exitStatus() != QProcess::NormalExit) {
+            accumulated += "gcc crashed: " + p.errorString() + "\n";
+            return false;
+        }
+        if (p.exitCode() != 0) {
+            // A normal non-zero exit (compile errors); errorString() would say "Unknown error".
+            accumulated += QString("gcc exit %1\n").arg(p.exitCode());
             return false;
         }
         return true;

@@ -1,4 +1,4 @@
-// Runs the real examples/* firmware (built by CMake with arm-none-eabi-gcc) on the Machine.
+﻿// Runs the real examples/* firmware (built by CMake with arm-none-eabi-gcc) on the Machine.
 #include "TestUtil.h"
 
 #include <gtest/gtest.h>
@@ -139,7 +139,7 @@ TEST_F(FirmwareTest, HardFaultExampleReachesHandler) {
 // disabled by default; run with:
 //   build\tests\mk_emul_tests --gtest_also_run_disabled_tests --gtest_filter=*Speed*
 TEST_F(FirmwareTest, DISABLED_Speed) {
-    for (const char *name : {"blinky", "uart_printf", "systick_exti"}) {
+    for (const char *name : {"blinky", "uart_printf", "systick_exti", "fpu_irq"}) {
         load(name);
         constexpr uint64_t kInsns = 50000000;
         const auto t0 = std::chrono::steady_clock::now();

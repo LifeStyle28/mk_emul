@@ -8,6 +8,12 @@
 #include <unordered_set>
 #include <vector>
 
+#if defined(_MSC_VER)
+#define MK_NOINLINE __declspec(noinline)
+#else
+#define MK_NOINLINE __attribute__((noinline))
+#endif
+
 struct uc_struct;
 typedef struct uc_struct uc_engine;
 
@@ -115,6 +121,7 @@ private:
     uint32_t privilegedReg(int unicornReg) const;
     bool isFpInstruction(uint32_t addr) const;
     bool fpAccessAllowed() const;
+    MK_NOINLINE void reportNoCoprocessor(uint32_t addr);
 
     struct RamRegion {
         uint32_t base;

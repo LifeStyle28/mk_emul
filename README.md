@@ -30,7 +30,7 @@ Tested with Visual Studio 2026 Community (workload "Desktop development with C++
    ```
 3. Build (finds `vcvars64.bat` itself; override with `QT_DIR` / `VCVARS` env vars):
    ```bat
-   scriptsuild.bat
+   scripts\build.bat
    ```
    First configure downloads Unicorn and Capstone (needs network).
 
