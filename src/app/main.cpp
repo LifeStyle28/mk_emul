@@ -18,9 +18,12 @@ int main(int argc, char *argv[]) {
 
     if (argc >= 2 && QString::fromUtf8(argv[1]) == QLatin1String("--headless")) {
         // Worker initializes asynchronously; wait via local event loop in GUI-less mode.
+        // Usage: mk_emul --headless [steps] [firmware.elf|.hex|.bin]
         int steps = 40000;
         if (argc >= 3)
             steps = QString::fromUtf8(argv[2]).toInt();
+        if (argc >= 4)
+            controller.loadFirmware(QUrl::fromLocalFile(QString::fromLocal8Bit(argv[3])));
         QObject::connect(controller.boardModel(), &BoardModel::ledsChanged, &app, [&]() {
             // keep alive
         });

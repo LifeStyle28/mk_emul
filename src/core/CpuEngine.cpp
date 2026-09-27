@@ -49,9 +49,18 @@ bool CpuEngine::open(std::string *error) {
         return false;
     }
 
-#ifdef UC_CPU_ARM_CORTEX_M4
-    uc_ctl_set_cpu_model(uc_, UC_CPU_ARM_CORTEX_M4);
-#endif
+    // UC_CPU_ARM_CORTEX_M4 is an enum value, not a macro: an #ifdef around this call was
+    // always false and Unicorn silently emulated a Cortex-A15 in Thumb mode. Don't pass
+    // UC_MODE_MCLASS either: Unicorn then forces a Cortex-M33.
+    err = uc_ctl_set_cpu_model(uc_, UC_CPU_ARM_CORTEX_M4);
+    if (err != UC_ERR_OK) {
+        lastError_ = std::string("Cortex-M4 model: ") + uc_strerror(err);
+        if (error)
+            *error = lastError_;
+        uc_close(uc_);
+        uc_ = nullptr;
+        return false;
+    }
 
     installHooks();
     return true;
@@ -117,7 +126,9 @@ void CpuEngine::setReg(int unicornReg, uint32_t value) {
 uint32_t CpuEngine::pc() const { return reg(UC_ARM_REG_PC) & ~1u; }
 uint32_t CpuEngine::sp() const { return reg(UC_ARM_REG_SP); }
 uint32_t CpuEngine::lr() const { return reg(UC_ARM_REG_LR); }
-uint32_t CpuEngine::xpsr() const { return reg(UC_ARM_REG_CPSR); }
+// Cortex-M: XPSR (not CPSR) carries IPSR, so Unicorn knows it is in handler mode and
+// treats BX to EXC_RETURN as an exception return.
+uint32_t CpuEngine::xpsr() const { return reg(UC_ARM_REG_XPSR); }
 uint32_t CpuEngine::msp() const { return reg(UC_ARM_REG_MSP); }
 uint32_t CpuEngine::psp() const { return reg(UC_ARM_REG_PSP); }
 uint32_t CpuEngine::control() const { return reg(UC_ARM_REG_CONTROL); }
@@ -127,7 +138,13 @@ uint32_t CpuEngine::primask() const { return reg(UC_ARM_REG_PRIMASK); }
 void CpuEngine::setPc(uint32_t value) { setReg(UC_ARM_REG_PC, value); }
 void CpuEngine::setSp(uint32_t value) { setReg(UC_ARM_REG_SP, value); }
 void CpuEngine::setLr(uint32_t value) { setReg(UC_ARM_REG_LR, value); }
-void CpuEngine::setXpsr(uint32_t value) { setReg(UC_ARM_REG_CPSR, value); }
+void CpuEngine::setXpsr(uint32_t value) {
+    // NZCVQ + GE + IPSR + EPSR in one write.
+    setReg(UC_ARM_REG_XPSR_NZCVQG, value);
+    // Unicorn does not rebuild the cached hflags after an XPSR write, so the translator
+    // would keep the old handler/thread mode. An APSR_NZCV write (same flags) rebuilds them.
+    setReg(UC_ARM_REG_APSR_NZCV, value);
+}
 void CpuEngine::setMsp(uint32_t value) { setReg(UC_ARM_REG_MSP, value); }
 void CpuEngine::setPsp(uint32_t value) { setReg(UC_ARM_REG_PSP, value); }
 void CpuEngine::setControl(uint32_t value) { setReg(UC_ARM_REG_CONTROL, value); }

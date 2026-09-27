@@ -14,25 +14,28 @@ Desktop emulator of **STM32F407VG** (Cortex-M4): Unicorn Engine for the CPU, a c
 
 ## Build (Windows)
 
-Qt 6.3+ (msvc2019_64) and Visual Studio 2022 Build Tools with C++.
+Tested with Visual Studio 2026 Community (workload "Desktop development with C++", includes CMake and Ninja) and Qt 6.8.3 `msvc2022_64`. VS 2022 Build Tools also work.
 
-```bat
-call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=C:/Qt/6.3.2/msvc2019_64 -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-```
+1. Qt without an account, via [aqtinstall](https://github.com/miurahr/aqtinstall):
+   ```powershell
+   py -m pip install --user aqtinstall
+   py -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O C:\Qt
+   ```
+2. ARM toolchain for the in-app **Build & Load** (do this before the first build: CMake copies
+   `third_party/toolchain` next to the exe as `toolchain\`):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts/fetch_toolchain.ps1
+   ```
+3. Build (finds `vcvars64.bat` itself; override with `QT_DIR` / `VCVARS` env vars):
+   ```bat
+   scriptsuild.bat
+   ```
+   First configure downloads Unicorn and Capstone (needs network).
 
-First configure downloads Unicorn and Capstone (needs network).
+Run `build\mk_emul.exe` (desktop UI).
 
-Run `build\mk_emul.exe`. Optional: `mk_emul.exe --headless` for a short smoke run.
-
-## Toolchain for in-app compile
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/fetch_toolchain.ps1
-```
-
-Copy `third_party/toolchain` next to the exe as `toolchain\`, or set `ARM_NONE_EABI_GCC` to `arm-none-eabi-gcc.exe`.
+Console smoke run without UI: `mk_emul.exe --headless [steps] [firmware.elf|.hex|.bin]` prints
+`status=... leds=0x? pc=0x...`. Without a firmware path it runs the built-in blinky.
 
 ## Examples
 

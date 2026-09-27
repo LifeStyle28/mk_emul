@@ -70,8 +70,10 @@ void Machine::wirePeripherals() {
     cpu_.mapMmio(mcu::kPpbBase, mcu::kPpbSize, &bus_);
 
     cpu_.setInterruptHandler([this](uint32_t intno) {
-        if (intno == 8) {
-            uint32_t exc = cpu_.pc();
+        if (intno == 8) { // EXCP_EXCEPTION_EXIT
+            // PC holds EXC_RETURN with bit 0 cleared (0xFFFFFFF8 for 0xFFFFFFF9); restore it,
+            // otherwise the "return to handler" / "return to PSP" modes are misdecoded.
+            uint32_t exc = cpu_.pc() | 1u;
             if ((exc & 0xFFFFFF00u) != 0xFFFFFF00u)
                 exc = cpu_.lr();
             nvic_.exitException(cpu_, exc);

@@ -26,3 +26,4 @@ __pycache__/
 !examples/**/*.bin
 .DS_Store
 Thumbs.db
+aqtinstall.log
