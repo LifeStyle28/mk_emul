@@ -42,9 +42,20 @@ typedef struct {
     __IO uint32_t SCR;
     __IO uint32_t CCR;
     __IO uint8_t SHP[12];
-    __IO uint32_t SHCSR;
-    uint32_t RESERVED1[32];
-    __IO uint32_t CPACR;
+    __IO uint32_t SHCSR;  // 0x24
+    __IO uint32_t CFSR;   // 0x28
+    __IO uint32_t HFSR;   // 0x2C
+    __IO uint32_t DFSR;   // 0x30
+    __IO uint32_t MMFAR;  // 0x34
+    __IO uint32_t BFAR;   // 0x38
+    __IO uint32_t AFSR;   // 0x3C
+    __I uint32_t PFR[2];  // 0x40
+    __I uint32_t DFR;     // 0x48
+    __I uint32_t ADR;     // 0x4C
+    __I uint32_t MMFR[4]; // 0x50
+    __I uint32_t ISAR[5]; // 0x60
+    uint32_t RESERVED0[5];
+    __IO uint32_t CPACR;  // 0x88
 } SCB_Type;
 
 #define SCS_BASE (0xE000E000UL)

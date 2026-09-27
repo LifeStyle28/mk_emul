@@ -310,10 +310,80 @@ FP-инструкции в обработчике, оставался выста
 `tests/asm/fpu_*.s`, `tests/cortex_programs.inc`, `tests/test_nvic.cpp`,
 `tests/test_firmware.cpp`, `tests/CMakeLists.txt`, `README.md`, `docs/MANUAL_TESTING.md`.
 
+## Доступ к FPU через CPACR (UsageFault NOCP) и найденные по пути ошибки
+
+### CPACR и NOCP
+**Было:** FPU работал всегда, даже если прошивка не включила его в `SCB->CPACR`. На настоящем
+МК первая FP-инструкция при выключенном FPU вызывает UsageFault NOCP, а в сборке Unicorn
+проверка доступа к FPU отключена совсем (`fp_exception_el()` всегда возвращает 0). Типичная
+ошибка студента («забыл включить FPU в своём стартовом коде») в эмуляторе не проявлялась.
+
+**Стало:**
+- запись в `SCB->CPACR` передаётся в `CpuEngine::setCpacr`. Пока доступ не полный, хук
+  инструкций распознаёт 32-битные инструкции сопроцессоров 10/11 (все инструкции FPv4:
+  VADD, VLDR/VSTR, VPUSH/VPOP, VMOV, VMRS/VMSR…) и останавливает процессор **до** них;
+- ошибка обрабатывается как на Cortex-M4: `CFSR.NOCP` (бит 19), UsageFault, если он разрешён в
+  SHCSR, иначе HardFault (FORCED). Сохранённый PC указывает на FP-инструкцию. Статус, например,
+  `HardFault: FPU disabled (CPACR) @ 0x08000248`;
+- учитывается режим «только привилегированный доступ» (`CP10 = 01`);
+- ОЗУ и flash теперь в буферах эмулятора (`uc_mem_map_ptr`), чтобы хук читал инструкцию напрямую.
+  Пока FPU включён полностью (обычный случай после `SystemInit`), проверка не выполняется;
+- на панели Peripherals добавлен `SCB_CPACR`.
+
+### Ошибка в заголовке `core_cm4.h`: `SystemInit()` никогда не включал FPU
+Нашлась сразу, как только эмулятор начал проверять CPACR: пример `fpu_irq` упал с NOCP. В
+`SCB_Type` после `SHCSR` стоял `RESERVED1[32]`, поэтому `SCB->CPACR` указывал на `0xE000EDA8`
+вместо `0xE000ED88`, и строка `SCB->CPACR |= …` в `SystemInit()` писала мимо регистра. На
+настоящей плате **любая** прошивка с float падала бы в HardFault (так было и в исходной версии),
+а эмулятор это скрывал. Структура исправлена по CMSIS: добавлены `CFSR`, `HFSR`, `DFSR`,
+`MMFAR`, `BFAR`, `AFSR` и др., CPACR на смещении 0x88. Файл: `device/stm32f407/include/core_cm4.h`.
+
+Заодно: тестовые прошивки не пересобирались после изменения заголовков (в `DEPENDS` их не было),
+теперь `tests/CMakeLists.txt` зависит от `device/stm32f407/include/*.h`.
+
+### Исключения из непривилегированного кода и из кода на PSP
+Нашлось тестом на CPACR с доступом «только привилегированный». Unicorn игнорирует запись
+MSP/PSP/CONTROL/PRIMASK и читает их как 0, пока процессор выполняет непривилегированный код
+(CONTROL.nPRIV = 1), причём и для записей через API. Кроме того, в режиме обработчика он
+игнорирует запись SPSEL. Из-за этого:
+- исключение из непривилегированного потока ломало стек (MSP не обновлялся, обработчик
+  работал поверх фрейма, возврат приводил к Lockup);
+- исключение из потока на PSP (так работают задачи FreeRTOS) оставляло обработчик на PSP, а
+  возврат снимал фрейм не с того стека;
+- панель регистров показывала MSP/PSP = 0 для непривилегированного кода.
+
+**Стало:** `Nvic::enterException/exitException` переключают SPSEL, пока процессор ещё в режиме
+потока, временно снимают nPRIV (`CpuEngine::setNPriv`, при необходимости через кратковременный
+режим обработчика) и явно задают MSP и PSP. `msp()`, `psp()`, `primask()`, `basepri()`,
+`faultmask()` читаются правильно и в непривилегированном режиме. Сброс МК тоже работает из
+непривилегированного состояния.
+
+### Тесты
+Все падали на старом коде (кроме проверки после исправления заголовка):
+- `tests/asm/nocp.s` → `FpuDisabledByCpacrIsNocpHardFault`, `FpuDisabledByCpacrIsUsageFaultWhenEnabled`:
+  CFSR = NOCP, эскалация / UsageFault, сохранённый PC = FP-инструкция, следующая не выполнилась;
+- `cpacr_priv.s` → `CpacrPrivilegedOnlyFaultsInUnprivilegedThread`: в привилегированном режиме FP
+  работает, после `CONTROL.nPRIV = 1` — NOCP; фрейм на MSP;
+- `psp_thread.s` → `ExceptionsFromPspThreadPrivilegedAndUnprivileged`: прерывание и SVC из
+  потока на PSP (привилегированного и нет): `EXC_RETURN 0xFFFFFFFD`, фрейм на PSP, обработчик
+  на MSP, после возврата PSP, SPSEL и nPRIV на месте;
+- `fpu_handler_only.s`, `fpu_nested.s` теперь включают FPU через CPACR;
+- `FirmwareTest.FpuIrqKeepsFloatRegistersOfInterruptedCode` проверяет и то, что `SystemInit()`
+  действительно включает FPU.
+
+Всего 81 тест. Скорость в пределах шума (при текущей загрузке машины 110/122/90 млн инструкций в
+секунду против 117/120/94 у предыдущего коммита). Проверено в окне: `fpu_irq` работает,
+`SCB_CPACR = 0x00F00000`, CONTROL = 4. В чек-лист (раздел 6а) добавлена проверка CPACR.
+
+Файлы: `src/core/CpuEngine.{h,cpp}`, `src/core/Nvic.{h,cpp}`, `src/core/Machine.{h,cpp}`,
+`src/ui/bridge/EmulatorController.cpp`, `device/stm32f407/include/core_cm4.h`,
+`tests/asm/{nocp,cpacr_priv,psp_thread,fpu_handler_only,fpu_nested}.s`,
+`tests/cortex_programs.inc`, `tests/test_nvic.cpp`, `tests/CMakeLists.txt`.
+
 ## Известные ограничения (кандидаты на доработку)
 
-- FPU работает, даже если прошивка не включила его в `SCB->CPACR`. На настоящем МК первая
-  FP-инструкция тогда вызывает UsageFault (NOCP), а в Unicorn доступ к FPU разрешён всегда.
+- Непривилегированный код может обращаться к NVIC/SCB и периферии; на настоящем МК обращение к
+  области SCS из непривилегированного режима вызывает BusFault.
 - FPDSCR хранится, но не применяется: новый FP-контекст в обработчике получает FPSCR = 0.
 - Консоль UART не очищается при загрузке другой прошивки (есть кнопка Clear).
 

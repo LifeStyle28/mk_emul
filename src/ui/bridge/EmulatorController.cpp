@@ -257,6 +257,7 @@ void EmulatorController::applySnapshot(const MachineSnapshot &snap, const QByteA
     per.push_back({"SCB_CFSR", hex(snap.cfsr)});
     per.push_back({"SCB_HFSR", hex(snap.hfsr)});
     per.push_back({"SCB_BFAR", hex(snap.bfar)});
+    per.push_back({"SCB_CPACR", hex(snap.cpacr)});
     per.push_back({"INSNS", QString::number(snap.instructions)});
     periph_.update(per);
 

@@ -142,13 +142,15 @@ void Machine::applyResetCpu() {
     const uint32_t table = vectorBase_;
     const uint32_t sp = cpu_.read32(table);
     const uint32_t pc = cpu_.read32(table + 4);
+    // Order matters (see Nvic::enterException): privileged first, then thread mode with
+    // CONTROL = 0 (MSP active), then the stack pointers.
+    cpu_.setNPriv(false);
+    cpu_.setXpsr(0x01000000u); // Thumb, thread mode
+    cpu_.setControl(0);
     cpu_.setMsp(sp);
     cpu_.setPsp(sp);
-    cpu_.setSp(sp);
     cpu_.setPc(pc & ~1u);
     cpu_.setLr(0xFFFFFFFFu);
-    cpu_.setXpsr(0x01000000u); // Thumb
-    cpu_.setControl(0);
     cpu_.setPrimask(0);
     for (int i = 0; i < 13; ++i)
         cpu_.setReg(UC_ARM_REG_R0 + i, 0);
@@ -242,6 +244,9 @@ void Machine::deliverFault() {
         break;
     case CpuEngine::FaultKind::Unaligned:
         type = Nvic::FaultType::Unaligned;
+        break;
+    case CpuEngine::FaultKind::NoCoprocessor:
+        type = Nvic::FaultType::NoCoprocessor;
         break;
     default:
         break;
@@ -361,6 +366,7 @@ MachineSnapshot Machine::snapshot() const {
     s.cfsr = nvic_.cfsr();
     s.hfsr = nvic_.hfsr();
     s.bfar = nvic_.bfar();
+    s.cpacr = nvic_.debugCpacr();
     s.instructions = cpu_.instructionCount();
     s.haltReason = status_;
     s.stop = cpu_.lastStop();

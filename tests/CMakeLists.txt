@@ -28,6 +28,7 @@ find_program(MK_EMUL_ARM_GCC arm-none-eabi-gcc
     HINTS ${CMAKE_SOURCE_DIR}/third_party/toolchain/bin
     ENV ARM_NONE_EABI_GCC)
 set(FW_DIR ${CMAKE_CURRENT_BINARY_DIR}/firmware)
+file(GLOB DEVICE_HEADERS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/device/stm32f407/include/*.h)
 set(DEVICE_DIR ${CMAKE_SOURCE_DIR}/device/stm32f407)
 set(FW_EXAMPLES blinky uart_printf systick_exti hardfault fpu_irq)
 
@@ -50,6 +51,7 @@ if(MK_EMUL_ARM_GCC)
                     ${DEVICE_DIR}/startup_stm32f407xx.s
                     ${DEVICE_DIR}/system_stm32f4xx.c
                     ${DEVICE_DIR}/STM32F407VGTx_FLASH.ld
+                    ${DEVICE_HEADERS}
             COMMENT "Building test firmware ${ex}.elf"
             VERBATIM)
         list(APPEND FW_ELFS ${elf})

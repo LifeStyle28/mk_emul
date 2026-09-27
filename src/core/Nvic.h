@@ -28,7 +28,7 @@ public:
     void enterException(CpuEngine &cpu, int exceptionNumber);
     void exitException(CpuEngine &cpu, uint32_t excReturn);
 
-    enum class FaultType { BusData, BusFetch, UndefInstr, Unaligned, Other };
+    enum class FaultType { BusData, BusFetch, UndefInstr, Unaligned, NoCoprocessor, Other };
     // Enters BusFault/UsageFault (if enabled in SHCSR and allowed by priority) or escalates
     // to HardFault, filling CFSR/HFSR/BFAR. Returns the exception number entered,
     // or 0 on lockup (fault inside HardFault/NMI, or no handler in the vector table).

@@ -6,7 +6,10 @@
 @ Thread code does not use the FPU, the handler does: basic frame, EXC_RETURN 0xFFFFFFF9,
 @ and the thread gets back FPCA = 0.
 .org 0x100
-main:   ldr r1, =0xE000E100
+main:   ldr r1, =0xE000ED88
+        ldr r0, =0x00F00000
+        str r0, [r1]          @ CPACR: CP10/CP11 full access
+        ldr r1, =0xE000E100
         movs r0, #1
         str r0, [r1]          @ enable IRQ0
         ldr r1, =0xE000E200

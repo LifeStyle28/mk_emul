@@ -33,6 +33,8 @@ void Nvic::reset() {
     scr_ = 0;
     ccr_ = 0x00000200u;
     cpacr_ = 0;
+    if (cpu_)
+        cpu_->setCpacr(0);
     shcsr_ = 0;
     cfsr_ = 0;
     hfsr_ = 0;
@@ -178,6 +180,10 @@ uint32_t Nvic::vectorAddress(int exceptionNumber) const {
     return cpu_->read32(table + static_cast<uint32_t>(exceptionNumber) * 4u);
 }
 
+// Unicorn keeps the active stack pointer in SP and the other one aside; which is which follows
+// its own view of the mode (handler mode or SPSEL = 0 means MSP). It ignores SPSEL writes in
+// handler mode, and MSP/PSP/CONTROL writes from unprivileged thread code. So entry and exit
+// switch SPSEL while in thread mode, run with nPRIV cleared, then set MSP and PSP explicitly.
 void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
     const uint32_t xpsr = cpu.xpsr();
     const uint32_t control = cpu.control();
@@ -185,14 +191,21 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
     const bool handlerMode = ipsr != 0;
     const bool spSel = (control & 2u) != 0;
     const bool usePsp = !handlerMode && spSel;
+    const bool nPriv = (control & 1u) != 0;
     // CONTROL.FPCA: the interrupted code has an active FP context (Unicorn sets it on the first
     // FP instruction). Then the extended frame also holds S0-S15 and FPSCR.
     const bool fpFrame = (control & kControlFpca) != 0;
 
-    uint32_t frame = usePsp ? cpu.psp() : cpu.msp();
+    cpu.setNPriv(false);
+    uint32_t msp = cpu.msp();
+    uint32_t psp = cpu.psp();
+    uint32_t &sp = usePsp ? psp : msp;
+
+    uint32_t frame = sp;
     const uint32_t align = frame & 4u;
     frame &= ~4u;
     frame -= fpFrame ? kFpFrameSize : kBasicFrameSize;
+    sp = frame;
 
     uint32_t r[16];
     cpu.snapshotRegs(r);
@@ -219,10 +232,10 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
         fpcar_ = frame + 0x20u;
     }
 
-    if (usePsp)
-        cpu.setPsp(frame);
-    else
-        cpu.setMsp(frame);
+    // Still in the interrupted mode: the handler runs on MSP (SPSEL = 0) without an FP context.
+    cpu.setControl(control & ~(1u | 2u | kControlFpca));
+    cpu.setMsp(msp);
+    cpu.setPsp(psp);
 
     uint32_t excReturn = 0xFFFFFFF9u;
     if (handlerMode)
@@ -238,8 +251,8 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
 
     const uint32_t newXpsr = (xpsr & ~0x1FFu) | (static_cast<uint32_t>(exceptionNumber) & 0x1FFu) | (1u << 24);
     cpu.setXpsr(newXpsr);
-    cpu.setControl(control & ~(2u | kControlFpca)); // the handler starts without an FP context
-    cpu.setSp(cpu.msp());
+    if (nPriv)
+        cpu.setNPriv(true); // handler mode is privileged anyway; applies again after return
 
     currentException_ = exceptionNumber;
     setPendingBit(exceptionNumber, false);
@@ -252,10 +265,15 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
 void Nvic::exitException(CpuEngine &cpu, uint32_t excReturn) {
     const uint32_t mode = excReturn & 0xFu;
     const bool toPsp = mode == 0xDu;
-    const bool toHandler = mode == 0x1u;
     const bool fpFrame = (excReturn & 0x10u) == 0;
+    const uint32_t control = cpu.control();
+    const bool nPriv = (control & 1u) != 0;
 
-    uint32_t frame = toPsp ? cpu.psp() : cpu.msp();
+    uint32_t msp = cpu.msp(); // handler mode: privileged, SPSEL = 0
+    uint32_t psp = cpu.psp();
+    uint32_t &sp = toPsp ? psp : msp;
+
+    const uint32_t frame = sp;
     const uint32_t r0 = cpu.read32(frame + 0);
     const uint32_t r1 = cpu.read32(frame + 4);
     const uint32_t r2 = cpu.read32(frame + 8);
@@ -270,10 +288,11 @@ void Nvic::exitException(CpuEngine &cpu, uint32_t excReturn) {
             cpu.setSreg(i, cpu.read32(frame + 0x20u + 4u * i));
         cpu.setFpscr(cpu.read32(frame + 0x60u));
     }
-    // FPCA comes from EXC_RETURN. Written while still in handler mode: CONTROL writes from
-    // unprivileged thread code are ignored.
-    const uint32_t control = cpu.control();
-    cpu.setControl(fpFrame ? control | kControlFpca : control & ~kControlFpca);
+    sp = frame + (fpFrame ? kFpFrameSize : kBasicFrameSize) + ((xpsr & (1u << 9)) ? 4u : 0u);
+
+    // Still in handler mode: FPCA comes from EXC_RETURN; nPRIV is cleared until the stack
+    // pointers are set, otherwise Unicorn would ignore those writes in unprivileged thread mode.
+    cpu.setControl((fpFrame ? control | kControlFpca : control & ~kControlFpca) & ~1u);
 
     cpu.setReg(UC_ARM_REG_R0, r0);
     cpu.setReg(UC_ARM_REG_R1, r1);
@@ -284,20 +303,12 @@ void Nvic::exitException(CpuEngine &cpu, uint32_t excReturn) {
     cpu.setPc(pc & ~1u);
     cpu.setXpsr(xpsr | (1u << 24));
 
-    frame += fpFrame ? kFpFrameSize : kBasicFrameSize;
-    if (xpsr & (1u << 9))
-        frame += 4u;
-
-    if (toPsp) {
-        cpu.setPsp(frame);
-        cpu.setControl(cpu.control() | 2u);
-        cpu.setSp(frame);
-    } else {
-        cpu.setMsp(frame);
-        if (!toHandler)
-            cpu.setControl(cpu.control() & ~2u);
-        cpu.setSp(frame);
-    }
+    if (toPsp)
+        cpu.setControl(cpu.control() | 2u); // thread mode now: PSP becomes the active SP
+    cpu.setMsp(msp);
+    cpu.setPsp(psp);
+    if (nPriv)
+        cpu.setNPriv(true);
 
     currentException_ = static_cast<int>(xpsr & 0x1FFu);
     if (currentException_ >= 16) {
@@ -329,6 +340,11 @@ int Nvic::raiseFault(CpuEngine &cpu, FaultType type, uint32_t address) {
         break;
     case FaultType::Unaligned:
         cfsr_ |= 1u << 24; // UNALIGNED
+        exc = 6;
+        enableBit = 1u << 18;
+        break;
+    case FaultType::NoCoprocessor:
+        cfsr_ |= 1u << 19; // NOCP: FP instruction with the FPU disabled in CPACR
         exc = 6;
         enableBit = 1u << 18;
         break;
@@ -507,7 +523,9 @@ void Nvic::write32(uint32_t addr, uint32_t value) {
         return;
     }
     if (addr == 0xE000ED88u) {
-        cpacr_ = value;
+        cpacr_ = value & 0x00F00000u; // only CP10/CP11 (the FPU) exist
+        if (cpu_)
+            cpu_->setCpacr(cpacr_);
         return;
     }
     if (addr == 0xE000ED24u) {

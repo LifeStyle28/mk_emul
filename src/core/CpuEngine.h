@@ -56,6 +56,10 @@ public:
     void setPsp(uint32_t value);
     void setControl(uint32_t value);
     void setPrimask(uint32_t value);
+    // Sets/clears CONTROL.nPRIV. Unicorn ignores writes to MSP/PSP/CONTROL/PRIMASK (and reads
+    // them as 0) while the CPU runs unprivileged thread code, even from the API; the exception
+    // logic clears nPRIV around such accesses and restores it afterwards.
+    void setNPriv(bool on);
     // FPU: single-precision registers S0-S31 and FPSCR.
     uint32_t sreg(int n) const;
     void setSreg(int n, uint32_t value);
@@ -66,7 +70,7 @@ public:
     void readBanked();
 
     enum class StopReason { None, Quantum, Breakpoint, Fault, InterruptHook, Halted };
-    enum class FaultKind { None, ReadUnmapped, WriteUnmapped, FetchUnmapped, InvalidInsn, Unaligned, Other };
+    enum class FaultKind { None, ReadUnmapped, WriteUnmapped, FetchUnmapped, InvalidInsn, Unaligned, NoCoprocessor, Other };
 
     StopReason run(uint64_t maxInsns);
     void stop();
@@ -99,8 +103,26 @@ public:
 
     uc_engine *raw() { return uc_; }
 
+    // SCB->CPACR: an FP instruction without access stops the run with FaultKind::NoCoprocessor
+    // (Unicorn itself never checks CPACR).
+    void setCpacr(uint32_t cpacr) { fpAccess_ = (cpacr >> 20) & 3u; }
+
 private:
     void installHooks();
+    // Host copy of mapped RAM/flash at addr, or nullptr (MMIO, unmapped, crosses a region end).
+    const uint8_t *hostPtr(uint32_t addr, uint32_t len) const;
+    // Special register that Unicorn reads as 0 from unprivileged thread code.
+    uint32_t privilegedReg(int unicornReg) const;
+    bool isFpInstruction(uint32_t addr) const;
+    bool fpAccessAllowed() const;
+
+    struct RamRegion {
+        uint32_t base;
+        uint32_t size;
+        std::unique_ptr<uint8_t[]> data;
+    };
+    std::vector<RamRegion> ram_;
+    uint32_t fpAccess_ = 0; // CPACR.CP10: 0 denied, 1 privileged only, 3 full
 
     uc_engine *uc_ = nullptr;
     InterruptHandler onInterrupt_;

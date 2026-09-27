@@ -6,7 +6,10 @@
 @ IRQ0 uses the FPU and is preempted by IRQ1, which clobbers S1: "return to handler with
 @ FP context" (EXC_RETURN 0xFFFFFFE1) must restore it for IRQ0.
 .org 0x100
-main:   ldr r1, =0xE000E400
+main:   ldr r1, =0xE000ED88
+        ldr r0, =0x00F00000
+        str r0, [r1]          @ CPACR: CP10/CP11 full access
+        ldr r1, =0xE000E400
         movs r0, #0x40
         strb r0, [r1]         @ IRQ0 priority 0x40
         movs r0, #0x20

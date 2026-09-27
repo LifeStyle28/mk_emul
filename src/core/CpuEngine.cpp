@@ -71,15 +71,45 @@ void CpuEngine::close() {
         return;
     uc_close(uc_);
     uc_ = nullptr;
+    ram_.clear(); // after uc_close: Unicorn used these buffers
     codeHook_ = 0;
     intrHook_ = 0;
     memHook_ = 0;
 }
 
 void CpuEngine::mapRam(uint32_t addr, uint32_t size) {
-    uc_mem_map(uc_, addr, size, UC_PROT_ALL);
-    std::vector<uint8_t> zero(size, 0);
-    uc_mem_write(uc_, addr, zero.data(), size);
+    // Our own zeroed buffer, so the code hook can look at instructions without calling Unicorn.
+    RamRegion r{addr, size, std::make_unique<uint8_t[]>(size)};
+    if (uc_mem_map_ptr(uc_, addr, size, UC_PROT_ALL, r.data.get()) != UC_ERR_OK)
+        return;
+    ram_.push_back(std::move(r));
+}
+
+const uint8_t *CpuEngine::hostPtr(uint32_t addr, uint32_t len) const {
+    for (const auto &r : ram_) {
+        if (addr >= r.base && addr - r.base <= r.size - len)
+            return r.data.get() + (addr - r.base);
+    }
+    return nullptr;
+}
+
+bool CpuEngine::isFpInstruction(uint32_t addr) const {
+    const uint8_t *p = hostPtr(addr, 4);
+    if (!p)
+        return false;
+    const uint32_t hw1 = p[0] | (p[1] << 8);
+    const uint32_t hw2 = p[2] | (p[3] << 8);
+    // Thumb-2 coprocessor space (111x 11xx ...) with coprocessor 10 or 11: every FPv4
+    // instruction (VADD, VLDR/VSTR, VPUSH/VPOP, VMOV, VMRS/VMSR, ...).
+    return (hw1 & 0xEC00u) == 0xEC00u && (hw2 & 0x0E00u) == 0x0A00u;
+}
+
+bool CpuEngine::fpAccessAllowed() const {
+    if (fpAccess_ == 3)
+        return true;
+    if (fpAccess_ == 1) // privileged: handler mode or CONTROL.nPRIV = 0
+        return ipsr() != 0 || (control() & 1u) == 0;
+    return false;
 }
 
 void CpuEngine::mapMmio(uint32_t addr, uint32_t size, MmioBus *bus) {
@@ -149,13 +179,40 @@ uint32_t CpuEngine::lr() const { return reg(UC_ARM_REG_LR); }
 // Cortex-M: XPSR (not CPSR) carries IPSR, so Unicorn knows it is in handler mode and
 // treats BX to EXC_RETURN as an exception return.
 uint32_t CpuEngine::xpsr() const { return reg(UC_ARM_REG_XPSR); }
-uint32_t CpuEngine::msp() const { return reg(UC_ARM_REG_MSP); }
-uint32_t CpuEngine::psp() const { return reg(UC_ARM_REG_PSP); }
+uint32_t CpuEngine::msp() const { return privilegedReg(UC_ARM_REG_MSP); }
+uint32_t CpuEngine::psp() const { return privilegedReg(UC_ARM_REG_PSP); }
 uint32_t CpuEngine::control() const { return reg(UC_ARM_REG_CONTROL); }
 uint32_t CpuEngine::ipsr() const { return xpsr() & 0x1FFu; }
-uint32_t CpuEngine::primask() const { return reg(UC_ARM_REG_PRIMASK); }
-uint32_t CpuEngine::basepri() const { return reg(UC_ARM_REG_BASEPRI); }
-uint32_t CpuEngine::faultmask() const { return reg(UC_ARM_REG_FAULTMASK); }
+uint32_t CpuEngine::primask() const { return privilegedReg(UC_ARM_REG_PRIMASK); }
+uint32_t CpuEngine::basepri() const { return privilegedReg(UC_ARM_REG_BASEPRI); }
+uint32_t CpuEngine::faultmask() const { return privilegedReg(UC_ARM_REG_FAULTMASK); }
+
+uint32_t CpuEngine::privilegedReg(int unicornReg) const {
+    if (ipsr() != 0 || (control() & 1u) == 0)
+        return reg(unicornReg);
+    // Invisible to the program: nPRIV is restored right away.
+    auto *self = const_cast<CpuEngine *>(this);
+    self->setNPriv(false);
+    const uint32_t v = reg(unicornReg);
+    self->setNPriv(true);
+    return v;
+}
+
+void CpuEngine::setNPriv(bool on) {
+    const uint32_t c = control();
+    if (((c & 1u) != 0) == on)
+        return;
+    if (!on && ipsr() == 0) {
+        // Unprivileged thread code cannot clear nPRIV: do it from (briefly) handler mode, where
+        // Unicorn also ignores SPSEL, so the active stack pointer does not change.
+        const uint32_t x = xpsr();
+        setXpsr((x & ~0x1FFu) | 3u);
+        setControl(c & ~1u);
+        setXpsr(x);
+        return;
+    }
+    setControl(on ? c | 1u : c & ~1u);
+}
 
 void CpuEngine::setPc(uint32_t value) { setReg(UC_ARM_REG_PC, value); }
 void CpuEngine::setSp(uint32_t value) { setReg(UC_ARM_REG_SP, value); }
@@ -237,7 +294,7 @@ void CpuEngine::installHooks() {
     // instructions that actually executed. uc_emu_stop() from a code hook stops *before* the
     // current instruction, so it is not counted.
     uc_hook_add(uc_, &codeHook_, UC_HOOK_CODE,
-                (void *)+[](uc_engine *uc, uint64_t address, uint32_t, void *user) {
+                (void *)+[](uc_engine *uc, uint64_t address, uint32_t size, void *user) {
                     auto *cpu = static_cast<CpuEngine *>(user);
                     if (cpu->runExecuted_ >= cpu->runLimit_) {
                         uc_emu_stop(uc);
@@ -259,6 +316,21 @@ void CpuEngine::installHooks() {
                         }
                     }
                     cpu->skipNextBreakpoint_ = false;
+                    // FPU not enabled in CPACR: NOCP UsageFault before the FP instruction runs.
+                    if (cpu->fpAccess_ != 3 && size == 4 && cpu->isFpInstruction(static_cast<uint32_t>(address)) &&
+                        !cpu->fpAccessAllowed()) {
+                        cpu->lastStop_ = StopReason::Fault;
+                        cpu->faultKind_ = FaultKind::NoCoprocessor;
+                        cpu->faultAddress_ = static_cast<uint32_t>(address);
+                        char buf[64];
+                        std::snprintf(buf, sizeof(buf), "FPU disabled (CPACR) @ 0x%08X",
+                                      static_cast<unsigned>(address));
+                        cpu->lastError_ = buf;
+                        if (cpu->onFault_)
+                            cpu->onFault_(cpu->lastError_, cpu->faultAddress_);
+                        uc_emu_stop(uc);
+                        return;
+                    }
                     ++cpu->runExecuted_;
                 },
                 self, 1, 0);

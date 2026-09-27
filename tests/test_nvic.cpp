@@ -200,4 +200,61 @@ TEST_F(NvicTest, NestedHandlerRestoresFpuContextOfPreemptedHandler) {
     EXPECT_EQ(ipsr(), 0u);
 }
 
+// FPU access is controlled by SCB->CPACR (0 after reset): an FP instruction without access
+// raises a precise NOCP UsageFault, escalated to HardFault unless UsageFault is enabled.
+constexpr uint32_t kCfsrNocp = 1u << 19;
+
+TEST_F(NvicTest, FpuDisabledByCpacrIsNocpHardFault) {
+    loadImage(m, program(kNocp).vector(3, F + 0x180));
+    EXPECT_EQ(m.runQuantum(100), CpuEngine::StopReason::Fault);
+    EXPECT_EQ(m.status().rfind("HardFault: FPU disabled", 0), 0u) << m.status();
+    EXPECT_EQ(m.snapshot().cfsr, kCfsrNocp);
+    EXPECT_EQ(m.snapshot().hfsr, 0x40000000u) << "FORCED";
+    m.runQuantum(20); // Run from the vector catch: the handler records the stacked PC
+    EXPECT_EQ(r(6), r(4)) << "stacked PC = the FP instruction";
+    EXPECT_EQ(r(7), 3u);
+    EXPECT_EQ(r(5), 0u) << "the instruction after it never ran";
+}
+
+TEST_F(NvicTest, FpuDisabledByCpacrIsUsageFaultWhenEnabled) {
+    loadImage(m, program(kNocp).vector(6, F + 0x180));
+    m.cpu().setReg(UC_ARM_REG_R0, 1); // enable UsageFault in SHCSR
+    EXPECT_EQ(m.runQuantum(100), CpuEngine::StopReason::Fault);
+    EXPECT_EQ(m.status().rfind("UsageFault: FPU disabled", 0), 0u) << m.status();
+    EXPECT_EQ(m.snapshot().cfsr, kCfsrNocp);
+    EXPECT_EQ(m.snapshot().hfsr, 0u) << "not escalated";
+    m.runQuantum(20);
+    EXPECT_EQ(r(6), r(4));
+    EXPECT_EQ(r(7), 6u);
+}
+
+TEST_F(NvicTest, CpacrPrivilegedOnlyFaultsInUnprivilegedThread) {
+    loadImage(m, program(kCpacrPriv).vector(3, F + 0x180));
+    EXPECT_EQ(m.runQuantum(100), CpuEngine::StopReason::Fault);
+    EXPECT_EQ(r(5), 0x3F800000u) << "privileged FP instruction worked";
+    EXPECT_EQ(m.snapshot().cfsr, kCfsrNocp);
+    m.runQuantum(20);
+    EXPECT_EQ(r(6), r(4)) << "fault on the unprivileged FP instruction";
+    EXPECT_EQ(m.cpu().sp(), kStackTop - 0x20u) << "frame on MSP, handler runs on it";
+}
+
+// Thread on PSP, privileged and then unprivileged (as RTOS tasks): the frame goes onto PSP,
+// the handler runs on MSP, and the return restores PSP, SPSEL and nPRIV.
+TEST_F(NvicTest, ExceptionsFromPspThreadPrivilegedAndUnprivileged) {
+    constexpr uint32_t kPsp = 0x2001F000u;
+    loadImage(m, program(kPspThread).vector(kExcIrq0, F + 0x180).vector(kExcSvc, F + 0x1C0));
+    run(100);
+    EXPECT_EQ(r(7), 0xFFFFFFFDu) << "IRQ0 EXC_RETURN: thread, PSP";
+    EXPECT_EQ(r(6), kStackTop) << "IRQ0 handler on MSP";
+    EXPECT_EQ(r(5), kPsp - 0x20u) << "frame pushed onto PSP";
+    EXPECT_EQ(r(4), kPsp) << "back on PSP after IRQ0";
+    EXPECT_EQ(r(3), 2u);
+    EXPECT_EQ(m.cpu().reg(UC_ARM_REG_R11), 0xFFFFFFFDu) << "SVC from unprivileged thread";
+    EXPECT_EQ(m.cpu().reg(UC_ARM_REG_R10), kStackTop) << "SVC handler on MSP";
+    EXPECT_EQ(m.cpu().reg(UC_ARM_REG_R8), kPsp) << "back on PSP after SVC";
+    EXPECT_EQ(m.cpu().reg(UC_ARM_REG_R9), 3u) << "still unprivileged, on PSP";
+    EXPECT_EQ(m.cpu().psp(), kPsp) << "PSP readable for the UI even in unprivileged mode";
+    EXPECT_EQ(m.cpu().msp(), kStackTop);
+}
+
 } // namespace

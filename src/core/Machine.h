@@ -45,6 +45,7 @@ struct MachineSnapshot {
     uint32_t cfsr = 0;
     uint32_t hfsr = 0;
     uint32_t bfar = 0;
+    uint32_t cpacr = 0;
     uint64_t instructions = 0;
     std::string haltReason;
     CpuEngine::StopReason stop = CpuEngine::StopReason::None;
