@@ -1,6 +1,7 @@
 # mk_emul — STM32F407 emulator
 
 > Branch `my-version`: list of changes and fixes relative to the original repository — see [CHANGELOG.md](CHANGELOG.md).
+> Remaining work: [docs/TODO.md](docs/TODO.md).
 
 Desktop emulator of **STM32F407VG** (Cortex-M4): Unicorn Engine for the CPU, a custom MMIO model for peripherals, Qt 6 Quick/QML UI.
 
