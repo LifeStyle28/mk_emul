@@ -33,4 +33,10 @@ SECTIONS
   PROVIDE(_fini = 0);
   PROVIDE(__exidx_start = 0);
   PROVIDE(__exidx_end = 0);
+  /* Heap start for newlib's _sbrk (malloc, and printf/snprintf in newlib-nano): the heap grows
+     from the end of .bss towards the stack. Without it any firmware using them fails to link
+     with "undefined reference to `end'". */
+  . = ALIGN(8);
+  PROVIDE(end = .);
+  PROVIDE(_end = .);
 }

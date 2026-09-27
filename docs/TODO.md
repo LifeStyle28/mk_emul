@@ -3,15 +3,17 @@
 Состояние на 27.09.2026 (ветка `my-version`). Сделанное — в [CHANGELOG.md](../CHANGELOG.md).
 Уже работает и проверено: ядро Cortex-M4 (прерывания, приоритеты, SVC/PendSV, FPU, CPACR/NOCP,
 PSP и непривилегированный режим), таймеры, UART, EXTI, режим реального времени, весь ручной
-чек-лист `docs/MANUAL_TESTING.md` (81 автотест).
+чек-лист `docs/MANUAL_TESTING.md`, проект на STM32CubeF4 HAL `examples/hal_blinky` (84 автотеста).
 
 ## 1. Проверить на «настоящих» прошивках (главный риск)
-- [ ] **Проект на STM32CubeF4 HAL** (как генерирует CubeMX): `HAL_Init()`, `SystemClock_Config()` на
-      168 МГц через HSE + PLL, `HAL_Delay`, `HAL_GPIO_TogglePin`, `HAL_UART_Transmit`,
-      `HAL_GPIO_EXTI_Callback`. HAL ждёт флаги готовности (`HSERDY`, `PLLRDY`, `SWS`, флаги FLASH
-      latency, `TXE/TC` у UART) и при их отсутствии молча зависает или уходит в `Error_Handler`.
-      Сделать пример `examples/hal_blinky` + тест в `tests/test_firmware.cpp`.
-      Исходники HAL: github.com/STMicroelectronics/stm32f4xx_hal_driver и cmsis_device_f4.
+- [x] **Проект на STM32CubeF4 HAL** — `examples/hal_blinky`, тесты `HalFirmwareTest.*`
+      (понадобился bit-band и символ `end` в линкер-скрипте, см. CHANGELOG).
+      Исходники HAL кладутся в `third_party/stm32cube/` (не в git): клоны
+      github.com/STMicroelectronics/stm32f4xx_hal_driver, cmsis_device_f4 и cmsis_core.
+- [ ] **Build & Load для HAL-проектов в приложении.** `ArmGccBuilder` знает только
+      `device/stm32f407/include`, поэтому `examples/hal_blinky`, открытый в окне, не соберётся.
+      Варианты: положить HAL рядом с `device/` (≈ лицензия BSD-3, можно) и добавлять
+      `-I`/исходники HAL, если в папке проекта есть `stm32f4xx_hal_conf.h`.
 - [ ] **FreeRTOS**: две задачи с `vTaskDelay`, очередь или семафор. Проверяет SVC, PendSV,
       переключение контекста на PSP, FPU-контекст задач (порт ARM_CM4F).
 

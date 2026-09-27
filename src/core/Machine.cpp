@@ -70,6 +70,10 @@ void Machine::wirePeripherals() {
     cpu_.mapMmio(mcu::kApbAhbBase, mcu::kApbAhbSize, &bus_);
     cpu_.mapMmio(mcu::kAhb2Base, mcu::kAhb2Size, &bus_);
     cpu_.mapMmio(mcu::kPpbBase, mcu::kPpbSize, &bus_);
+    cpu_.mapMmio(mcu::kSramBitbandBase, mcu::kSramBitbandSize, &bus_);
+    cpu_.mapMmio(mcu::kPeriphBitbandBase, mcu::kPeriphBitbandSize, &bus_);
+    bus_.setMemoryAccess([this](uint32_t addr) { return cpu_.read32(addr); },
+                         [this](uint32_t addr, uint32_t value) { cpu_.write32(addr, value); });
 
     cpu_.setInterruptHandler([this](uint32_t intno) {
         if (intno == 8) { // EXCP_EXCEPTION_EXIT

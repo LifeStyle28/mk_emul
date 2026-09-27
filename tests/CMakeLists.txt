@@ -56,6 +56,46 @@ if(MK_EMUL_ARM_GCC)
             VERBATIM)
         list(APPEND FW_ELFS ${elf})
     endforeach()
+
+    # examples/hal_blinky: built with the real STM32CubeF4 HAL + CMSIS (not in the repo,
+    # download them into third_party/stm32cube, see docs/TODO.md). Skipped if absent.
+    set(CUBE_DIR ${CMAKE_SOURCE_DIR}/third_party/stm32cube)
+    if(EXISTS ${CUBE_DIR}/stm32f4xx_hal_driver/Src/stm32f4xx_hal.c)
+        set(HAL_SRC ${CUBE_DIR}/stm32f4xx_hal_driver/Src)
+        set(HAL_SOURCES)
+        foreach(m hal hal_rcc hal_rcc_ex hal_gpio hal_cortex hal_uart hal_pwr hal_pwr_ex
+                  hal_flash hal_flash_ex hal_dma hal_exti)
+            list(APPEND HAL_SOURCES ${HAL_SRC}/stm32f4xx_${m}.c)
+        endforeach()
+        set(HAL_SYSTEM ${CUBE_DIR}/cmsis_device_f4/Source/Templates/system_stm32f4xx.c)
+        set(elf ${FW_DIR}/hal_blinky.elf)
+        add_custom_command(OUTPUT ${elf}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${FW_DIR}
+            COMMAND ${MK_EMUL_ARM_GCC}
+                -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard -g3 -O0
+                -DSTM32F407xx -DUSE_HAL_DRIVER
+                -I${CMAKE_SOURCE_DIR}/examples/hal_blinky
+                -I${CUBE_DIR}/stm32f4xx_hal_driver/Inc
+                -I${CUBE_DIR}/cmsis_device_f4/Include
+                -I${CUBE_DIR}/cmsis_core/CMSIS/Core/Include
+                -nostartfiles -T ${DEVICE_DIR}/STM32F407VGTx_FLASH.ld -Wl,--gc-sections --specs=nano.specs
+                ${CMAKE_SOURCE_DIR}/examples/hal_blinky/main.c
+                ${DEVICE_DIR}/startup_stm32f407xx.s
+                ${HAL_SYSTEM} ${HAL_SOURCES}
+                -o ${elf} -lc -lm -lnosys
+            DEPENDS ${CMAKE_SOURCE_DIR}/examples/hal_blinky/main.c
+                    ${CMAKE_SOURCE_DIR}/examples/hal_blinky/stm32f4xx_hal_conf.h
+                    ${DEVICE_DIR}/startup_stm32f407xx.s
+                    ${DEVICE_DIR}/STM32F407VGTx_FLASH.ld
+                    ${HAL_SYSTEM} ${HAL_SOURCES}
+            COMMENT "Building test firmware hal_blinky.elf (STM32CubeF4 HAL)"
+            VERBATIM)
+        list(APPEND FW_ELFS ${elf})
+        target_compile_definitions(mk_emul_tests PRIVATE MK_EMUL_HAVE_CUBE_HAL=1)
+    else()
+        message(STATUS "mk_emul tests: third_party/stm32cube not found, HAL firmware test will be skipped")
+    endif()
+
     add_custom_target(mk_emul_test_firmware ALL DEPENDS ${FW_ELFS})
     add_dependencies(mk_emul_tests mk_emul_test_firmware)
     target_compile_definitions(mk_emul_tests PRIVATE MK_EMUL_FW_DIR="${FW_DIR}")

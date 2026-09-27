@@ -437,6 +437,33 @@ MSP/PSP/CONTROL/PRIMASK и читает их как 0, пока процессо
   сигнал принятия нативного диалога пришёл позже нажатия. С паузой 3 с всё верно; человек так
   быстро не нажмёт, но если это всплывёт, стоит блокировать Build & Load, пока открыт диалог.
 
+## Проверка на проекте STM32CubeF4 HAL
+
+Новый пример `examples/hal_blinky` — проект в стиле CubeMX на настоящем HAL от ST
+(`stm32f4xx_hal_driver`, `cmsis_device_f4`, `cmsis_core`; в репозиторий не входят, скачиваются
+в `third_party/stm32cube`, папка в `.gitignore`): `HAL_Init()`, `SystemClock_Config()` на
+168 МГц через HSE + PLL, `HAL_Delay`, `HAL_GPIO_TogglePin`, `HAL_UART_Transmit`,
+`HAL_GPIO_EXTI_Callback`. Если любой вызов HAL вернёт ошибку, `Error_Handler` зажигает синий
+светодиод.
+
+Что понадобилось исправить:
+- **Bit-band.** HAL включает PLL, HSI, LSI и т. д. записью в bit-band alias
+  (`__HAL_RCC_PLL_ENABLE()` пишет 1 по адресу `0x42470060`, это бит PLLON в `RCC->CR`).
+  Области `0x42000000` (периферия) и `0x22000000` (SRAM) не были отображены: запись
+  давала «write unmapped». Теперь каждое слово alias-области читает/пишет один бит целевого
+  регистра или слова SRAM. Остальные биты регистра при записи берутся из
+  `partialWriteBase()`, как при байтовой записи, поэтому чтение без побочных эффектов.
+- **Линкер-скрипт:** не было символа `end` (начало кучи для `_sbrk`), поэтому любая прошивка
+  с `malloc` или `snprintf` из newlib-nano не линковалась (`undefined reference to 'end'`).
+
+Тесты: `HalFirmwareTest.ClockConfigUartAndDelay` (строка `HAL ok, SYSCLK=168000000`, тики
+каждые 100 мс, мигание PD12, `Error_Handler` не вызван), `HalFirmwareTest.ButtonTogglesRedLedThroughExtiCallback`,
+`Bitband.PeripheralAndSramBits`. Если HAL не скачан, HAL-тесты пропускаются. Итого 84 теста.
+
+Файлы: `src/core/MmioBus.{h,cpp}`, `src/core/Addresses.h`, `src/core/Machine.cpp`,
+`device/stm32f407/STM32F407VGTx_FLASH.ld`, `examples/hal_blinky/`, `tests/CMakeLists.txt`,
+`tests/test_firmware.cpp`, `tests/test_periph_regs.cpp`.
+
 ## Известные ограничения (кандидаты на доработку)
 
 - Непривилегированный код может обращаться к NVIC/SCB и периферии; на настоящем МК обращение к

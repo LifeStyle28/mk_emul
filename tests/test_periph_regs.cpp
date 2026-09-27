@@ -158,4 +158,38 @@ TEST(Adc, ConversionReadsSliderValueAndClearsEoc) {
     EXPECT_FALSE(adc.read32(mcu::kAdc1Base + 0x00) & 2u);
 }
 
+uint32_t bitbandAlias(uint32_t aliasBase, uint32_t targetBase, uint32_t addr, unsigned bit) {
+    return aliasBase + (addr - targetBase) * 32u + bit * 4u;
+}
+
+// HAL sets e.g. RCC->CR.PLLON through the bit-band alias (__HAL_RCC_PLL_ENABLE).
+TEST(Bitband, PeripheralAndSramBits) {
+    Machine m;
+    std::string err;
+    ASSERT_TRUE(m.initialize(&err)) << err;
+    auto &bus = m.bus();
+    const auto periph = [](uint32_t addr, unsigned bit) {
+        return bitbandAlias(mcu::kPeriphBitbandBase, mcu::kApbAhbBase, addr, bit);
+    };
+
+    constexpr uint32_t kAhb1enr = mcu::kRccBase + 0x30;
+    const uint32_t before = bus.read(kAhb1enr, 4);
+    bus.write(periph(kAhb1enr, 3), 1, 4); // GPIODEN
+    EXPECT_EQ(bus.read(kAhb1enr, 4), before | (1u << 3));
+    EXPECT_EQ(bus.read(periph(kAhb1enr, 3), 4), 1u);
+
+    constexpr uint32_t kGpiodOdr = mcu::kGpioDBase + 0x14;
+    bus.write(periph(kGpiodOdr, 13), 1, 4);
+    EXPECT_EQ(bus.read(kGpiodOdr, 4), 1u << 13);
+    bus.write(periph(kGpiodOdr, 13), 0, 4);
+    EXPECT_EQ(bus.read(kGpiodOdr, 4), 0u);
+    EXPECT_EQ(bus.read(periph(kGpiodOdr, 13), 4), 0u);
+
+    constexpr uint32_t kWord = mcu::kSramBase + 0x100;
+    m.cpu().write32(kWord, 0x80000000u);
+    bus.write(bitbandAlias(mcu::kSramBitbandBase, mcu::kSramBase, kWord + 1, 2), 1, 4); // bit 10
+    EXPECT_EQ(m.cpu().read32(kWord), 0x80000400u);
+    EXPECT_EQ(bus.read(bitbandAlias(mcu::kSramBitbandBase, mcu::kSramBase, kWord, 31), 4), 1u);
+}
+
 } // namespace

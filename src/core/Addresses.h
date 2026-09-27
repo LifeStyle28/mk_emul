@@ -18,6 +18,11 @@ constexpr uint32_t kAhb2Base = 0x50000000u;
 constexpr uint32_t kAhb2Size = 0x00010000u;
 constexpr uint32_t kPpbBase = 0xE0000000u;
 constexpr uint32_t kPpbSize = 0x00010000u;
+// Bit-band aliases: one 32-bit word per bit of SRAM / APB+AHB1 (see MmioBus).
+constexpr uint32_t kSramBitbandBase = 0x22000000u;
+constexpr uint32_t kSramBitbandSize = kSramSize * 32u;
+constexpr uint32_t kPeriphBitbandBase = 0x42000000u;
+constexpr uint32_t kPeriphBitbandSize = kApbAhbSize * 32u;
 
 constexpr uint32_t kTim2Base = 0x40000000u;
 constexpr uint32_t kTim3Base = 0x40000400u;

@@ -135,6 +135,45 @@ TEST_F(FirmwareTest, HardFaultExampleReachesHandler) {
     EXPECT_TRUE(m.snapshot().leds & 0x4);
 }
 
+// CubeMX-style project on the real ST HAL: HSE + PLL to 168 MHz (HAL waits for HSERDY, PLLRDY,
+// SWS, FLASH latency; enables the PLL through bit-band), HAL_Delay, HAL_UART_Transmit, EXTI.
+// Any failed HAL call lands in Error_Handler, which turns on the blue LED (PD15).
+struct HalFirmwareTest : FirmwareTest {
+    void SetUp() override {
+#ifndef MK_EMUL_HAVE_CUBE_HAL
+        GTEST_SKIP() << "third_party/stm32cube (ST HAL) not found at configure time";
+#else
+        FirmwareTest::SetUp();
+        load("hal_blinky");
+#endif
+    }
+};
+
+TEST_F(HalFirmwareTest, ClockConfigUartAndDelay) {
+    // HAL_Delay(100) at 168 MHz is 16.8M cycles; 60M covers the start and a few ticks.
+    CpuEngine::StopReason stop;
+    const int toggles = countLedToggles(60000000, 0x1, &stop);
+    EXPECT_NE(stop, CpuEngine::StopReason::Fault) << m.status();
+    EXPECT_FALSE(m.snapshot().leds & 0x8) << "Error_Handler reached, uart: " << uart;
+    EXPECT_EQ(uart.rfind("HAL ok, SYSCLK=168000000\r\n", 0), 0u) << "got: " << uart;
+    EXPECT_NE(uart.find("tick 3\r\n"), std::string::npos) << "got: " << uart;
+    EXPECT_GE(toggles, 3);
+}
+
+TEST_F(HalFirmwareTest, ButtonTogglesRedLedThroughExtiCallback) {
+    runFor(m, 5000000); // past SystemClock_Config and GPIO_Init
+    const bool red = m.snapshot().leds & 0x4;
+    m.setButtonPressed(true);
+    runFor(m, 200000);
+    EXPECT_NE(static_cast<bool>(m.snapshot().leds & 0x4), red) << "press must toggle PD14";
+    m.setButtonPressed(false);
+    runFor(m, 200000);
+    m.setButtonPressed(true);
+    runFor(m, 200000);
+    EXPECT_EQ(static_cast<bool>(m.snapshot().leds & 0x4), red) << "second press toggles back";
+    EXPECT_FALSE(m.snapshot().leds & 0x8) << "Error_Handler reached";
+}
+
 // Emulation speed at Max (no pacing), in millions of instructions per second. Not a check, so
 // disabled by default; run with:
 //   build\tests\mk_emul_tests --gtest_also_run_disabled_tests --gtest_filter=*Speed*
