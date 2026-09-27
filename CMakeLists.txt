@@ -40,8 +40,9 @@ FetchContent_Declare(capstone
 FetchContent_MakeAvailable(capstone)
 set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
 
-set(MK_EMUL_SOURCES
-    src/app/main.cpp
+# Emulator core: CPU, bus, NVIC, peripherals, loaders. No Qt, so it can be unit-tested
+# and reused (tests, future GDB server).
+add_library(mk_emul_core STATIC
     src/core/CpuEngine.cpp
     src/core/MmioBus.cpp
     src/core/Nvic.cpp
@@ -54,13 +55,26 @@ set(MK_EMUL_SOURCES
     src/periph/SysTickTimer.cpp
     src/periph/Exti.cpp
     src/periph/SimplePeriphs.cpp
+)
+set_target_properties(mk_emul_core PROPERTIES AUTOMOC OFF AUTORCC OFF)
+target_include_directories(mk_emul_core PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${unicorn_SOURCE_DIR}/include
+    ${capstone_SOURCE_DIR}/include
+)
+target_link_libraries(mk_emul_core PUBLIC unicorn capstone)
+if(MSVC)
+    target_compile_options(mk_emul_core PRIVATE /W3 /utf-8)
+    target_compile_definitions(mk_emul_core PUBLIC NOMINMAX)
+endif()
+
+qt_add_executable(mk_emul
+    src/app/main.cpp
     src/ui/bridge/Models.cpp
     src/ui/bridge/EmulatorController.cpp
     src/ui/bridge/CHighlighter.cpp
     src/toolchain/ArmGccBuilder.cpp
 )
-
-qt_add_executable(mk_emul ${MK_EMUL_SOURCES})
 
 set_source_files_properties(
     src/ui/qml/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
@@ -114,21 +128,13 @@ qt_add_qml_module(mk_emul
         src/ui/qml/CodeEditor.qml
 )
 
-target_include_directories(mk_emul PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${unicorn_SOURCE_DIR}/include
-    ${capstone_SOURCE_DIR}/include
-)
-
 target_link_libraries(mk_emul PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2
-    unicorn
-    capstone
+    mk_emul_core
 )
 
 if(MSVC)
     target_compile_options(mk_emul PRIVATE /W3 /utf-8 /Zc:__cplusplus)
-    target_compile_definitions(mk_emul PRIVATE NOMINMAX)
 endif()
 
 add_custom_command(TARGET mk_emul POST_BUILD
@@ -151,4 +157,18 @@ if(WIN32)
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" --qmldir "${CMAKE_SOURCE_DIR}/src/ui/qml" "$<TARGET_FILE:mk_emul>"
         )
     endif()
+endif()
+
+option(MK_EMUL_BUILD_TESTS "Build unit and firmware tests (GoogleTest)" ON)
+if(MK_EMUL_BUILD_TESTS)
+    enable_testing()
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+    set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(googletest
+        URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(googletest)
+    add_subdirectory(tests)
 endif()

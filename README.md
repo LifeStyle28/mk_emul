@@ -37,6 +37,22 @@ Run `build\mk_emul.exe` (desktop UI).
 Console smoke run without UI: `mk_emul.exe --headless [steps] [firmware.elf|.hex|.bin]` prints
 `status=... leds=0x? pc=0x...`. Without a firmware path it runs the built-in blinky.
 
+## Tests
+
+```bat
+scripts	est.bat
+```
+Builds everything and runs CTest (43 tests, ~7 s):
+- **unit tests** (GoogleTest, `tests/`) for the Qt-free core library `mk_emul_core`: RCC clock tree,
+  GPIO/EXTI, register semantics (partial writes, rc_w0/rc_w1), SysTick/TIM/ADC/USART, CPU
+  (instruction count, breakpoints, SysTick exception entry/return, HardFault/BusFault/lockup);
+- **firmware tests**: `examples/*` compiled with `arm-none-eabi-gcc` and run on the emulator
+  (skipped if the toolchain is missing);
+- **end-to-end**: `mk_emul.exe --headless` with real firmware.
+
+Single test: `build	ests\mk_emul_tests.exe --gtest_filter=MachineTest.*`.
+Manual UI checklist: [docs/MANUAL_TESTING.md](docs/MANUAL_TESTING.md).
+
 ## Examples
 
 - `examples/blinky` — GPIOD 12–15 toggle

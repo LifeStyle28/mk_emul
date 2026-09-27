@@ -1,5 +1,7 @@
 @echo off
 rem Configure and build mk_emul (Release) with MSVC + Ninja.
+rem   build.bat        build
+rem   build.bat test   build, then run all tests (CTest)
 rem Override paths with environment variables QT_DIR / VCVARS if they differ.
 setlocal
 
@@ -24,3 +26,6 @@ if not exist build\build.ninja (
 cmake --build build || exit /b 1
 echo.
 echo Built: %CD%\build\mk_emul.exe
+if /i "%~1"=="test" (
+    ctest --test-dir build --output-on-failure || exit /b 1
+)

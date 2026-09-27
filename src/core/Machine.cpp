@@ -142,7 +142,14 @@ void Machine::loadBuiltinBlinky() {
 }
 
 LoadedImage Machine::loadFirmware(const std::string &path) {
-    auto img = FirmwareLoader::load(cpu_, path);
+    return applyImage(FirmwareLoader::load(cpu_, path), path);
+}
+
+LoadedImage Machine::loadFirmwareBuffer(const uint8_t *data, size_t size, const std::string &name) {
+    return applyImage(FirmwareLoader::loadBuffer(cpu_, data, size, name), name);
+}
+
+LoadedImage Machine::applyImage(LoadedImage img, const std::string &name) {
     if (!img.ok) {
         status_ = img.error;
         return img;
@@ -151,7 +158,7 @@ LoadedImage Machine::loadFirmware(const std::string &path) {
     firmwareLoaded_ = true;
     nvic_.write32(0xE000ED08u, vectorBase_); // VTOR
     applyResetCpu();
-    status_ = "Loaded " + path;
+    status_ = "Loaded " + name;
     return img;
 }
 

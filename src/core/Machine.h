@@ -58,6 +58,8 @@ public:
     bool initialize(std::string *error);
     void reset();
     LoadedImage loadFirmware(const std::string &path);
+    // ELF/HEX/BIN image already in memory (BIN is placed at the flash base); used by tests.
+    LoadedImage loadFirmwareBuffer(const uint8_t *data, size_t size, const std::string &name);
     void loadBuiltinBlinky();
 
     CpuEngine::StopReason step();
@@ -78,6 +80,7 @@ public:
     CpuEngine &cpu() { return cpu_; }
     const CpuEngine &cpu() const { return cpu_; }
     Rcc &rcc() { return rcc_; }
+    Nvic &nvic() { return nvic_; }
     MmioBus &bus() { return bus_; }
 
     using UartTx = std::function<void(uint8_t)>;
@@ -91,6 +94,7 @@ private:
     void wirePeripherals();
     void onGpioPin(int port, uint16_t odr, uint16_t idr);
     void applyResetCpu();
+    LoadedImage applyImage(LoadedImage img, const std::string &name);
     void tickPeripherals(uint32_t insns);
     void deliverFault();
 
