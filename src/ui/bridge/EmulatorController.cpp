@@ -10,6 +10,7 @@
 #include <QFileInfo>
 #include <QMetaType>
 #include <QQuickTextDocument>
+#include <QTimer>
 
 Q_DECLARE_METATYPE(MachineSnapshot)
 Q_DECLARE_METATYPE(QVector<DisasmModel::Row>)
@@ -24,6 +25,7 @@ void MachineWorker::initialize() {
         return;
     }
     disasm_.open(nullptr);
+    clock_.start();
     machine_.setUartTx([this](uint8_t b) { uartBuf_.append(static_cast<char>(b)); });
     emit inited(true, {});
     emitSnap(true);
@@ -59,7 +61,27 @@ void MachineWorker::step() {
 
 void MachineWorker::startRun() {
     setRunning(true);
+    pacer_.start(static_cast<uint64_t>(clock_.nsecsElapsed()));
     tick();
+}
+
+void MachineWorker::setSpeed(double speed) {
+    pacer_.setSpeed(speed);
+    if (running_)
+        pacer_.start(static_cast<uint64_t>(clock_.nsecsElapsed())); // re-anchor at the new speed
+}
+
+void MachineWorker::scheduleTick(uint64_t waitNs) {
+    // Ticks from an earlier run (before a pause/stop) must not start a second chain.
+    const quint64 gen = runGen_;
+    auto next = [this, gen] {
+        if (gen == runGen_)
+            tick();
+    };
+    if (waitNs >= 1000000) // sleep only for >= 1 ms; shorter waits are absorbed by the next chunk
+        QTimer::singleShot(static_cast<int>(waitNs / 1000000), Qt::PreciseTimer, this, next);
+    else
+        QMetaObject::invokeMethod(this, next, Qt::QueuedConnection);
 }
 
 void MachineWorker::pause() {
@@ -72,7 +94,15 @@ void MachineWorker::pause() {
 void MachineWorker::tick() {
     if (!running_)
         return;
-    const auto stop = machine_.runQuantum(12000);
+    const uint32_t hclk = machine_.rcc().hclk();
+    const uint64_t before = machine_.cpu().instructionCount();
+    const auto stop = machine_.runQuantum(pacer_.chunkInstructions(hclk));
+    const uint64_t executed = machine_.cpu().instructionCount() - before;
+    const uint64_t waitNs = pacer_.advance(executed, hclk, static_cast<uint64_t>(clock_.nsecsElapsed()));
+    if (pacer_.measuredSpeed() != lastSpeed_) {
+        lastSpeed_ = pacer_.measuredSpeed();
+        emit speedMeasured(lastSpeed_);
+    }
     emitSnap(stop != CpuEngine::StopReason::Quantum);
     if (stop == CpuEngine::StopReason::Breakpoint || stop == CpuEngine::StopReason::Fault) {
         setRunning(false);
@@ -80,7 +110,7 @@ void MachineWorker::tick() {
         emit statusChanged(QString::fromStdString(machine_.status()));
         return;
     }
-    QMetaObject::invokeMethod(this, "tick", Qt::QueuedConnection);
+    scheduleTick(waitNs);
 }
 
 void MachineWorker::loadPath(const QString &path) {
@@ -156,11 +186,18 @@ EmulatorController::EmulatorController(QObject *parent)
     });
     // The worker reports run/stop explicitly; guessing from status text broke when fault
     // messages changed ("HardFault: ..." left the UI showing RUNNING).
+    connect(worker_, &MachineWorker::speedMeasured, this, [this](double speed) {
+        measuredSpeed_ = speed;
+        emit speedChanged();
+    });
     connect(worker_, &MachineWorker::runStateChanged, this, [this](bool running) {
         if (running_ != running) {
             running_ = running;
             emit runningChanged();
         }
+        if (!running)
+            measuredSpeed_ = 0.0; // show "—" until the next run is measured
+        emit speedChanged();
     });
     connect(worker_, &MachineWorker::memoryReady, this, [this](quint32 addr, const QByteArray &data) {
         memory_.setBytes(addr, data);
@@ -234,6 +271,22 @@ void EmulatorController::reset() {
     running_ = false;
     emit runningChanged();
     QMetaObject::invokeMethod(worker_, "reset", Qt::QueuedConnection);
+}
+
+void EmulatorController::setSpeed(double speed) {
+    if (speed < 0.0)
+        speed = 0.0;
+    if (speed == speed_)
+        return;
+    speed_ = speed;
+    emit speedChanged();
+    QMetaObject::invokeMethod(worker_, "setSpeed", Qt::QueuedConnection, Q_ARG(double, speed));
+}
+
+QString EmulatorController::measuredSpeedText() const {
+    if (!running_ || measuredSpeed_ <= 0.0)
+        return QStringLiteral("—");
+    return QStringLiteral("×%1").arg(measuredSpeed_, 0, 'f', measuredSpeed_ < 10.0 ? 2 : 0);
 }
 
 void EmulatorController::run() {

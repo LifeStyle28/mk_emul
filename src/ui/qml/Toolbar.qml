@@ -45,6 +45,27 @@ ToolBar {
         }
         AppButton { text: "Step"; onClicked: emulator.step() }
 
+        ComboBox {
+            id: speedBox
+            implicitHeight: 30
+            Layout.preferredWidth: 132
+            font.pixelSize: 12
+            textRole: "text"
+            valueRole: "value"
+            model: [
+                { text: "Real time ×1", value: 1.0 },
+                { text: "Slow ×0.1", value: 0.1 },
+                { text: "Slow ×0.5", value: 0.5 },
+                { text: "Fast ×2", value: 2.0 },
+                { text: "Fast ×10", value: 10.0 },
+                { text: "Max speed", value: 0.0 }
+            ]
+            Component.onCompleted: currentIndex = indexOfValue(emulator.speed)
+            onActivated: emulator.speed = currentValue
+            ToolTip.visible: hovered
+            ToolTip.text: "Emulation speed. Real time: 1 emulated second = 1 second (SysTick delays, blinking)."
+        }
+
         Rectangle { width: 1; height: 18; color: Theme.border; Layout.leftMargin: 4; Layout.rightMargin: 4 }
 
         AppButton { text: "Builtin LED"; onClicked: emulator.loadBuiltin() }
@@ -74,6 +95,14 @@ ToolBar {
         AppButton { text: "Del"; danger: true; onClicked: emulator.removeBreakpoint() }
 
         Item { Layout.fillWidth: true }
+
+        Label {
+            // Measured emulated/real time ratio, e.g. ×1.00 in real-time mode.
+            text: "speed " + emulator.measuredSpeedText
+            color: Theme.muted
+            font.pixelSize: 11
+            font.family: Theme.monoFont
+        }
 
         Rectangle {
             implicitHeight: 26

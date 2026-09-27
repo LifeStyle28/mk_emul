@@ -7,7 +7,9 @@ param(
     [string]$Out = "shot.png",
     [string]$Text = "",
     [string]$Name = "",
-    [switch]$Double
+    [switch]$Double,
+    [int]$Count = 1,                # shot: number of frames (Out gets _1, _2, ... suffixes)
+    [int]$IntervalMs = 100
 )
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
@@ -165,25 +167,35 @@ switch ($Action) {
         }
     }
     "screen" {
-        # Screen pixels over the main window's rectangle: also shows dialogs on top of it.
+        # Screen pixels over the main window's rectangle (what the user sees, incl. dialogs).
         $h = Get-Win
         $r = New-Object W+RECT; [W]::GetWindowRect($h, [ref]$r) | Out-Null
         $w = $r.R - $r.L; $hh = $r.B - $r.T
-        $bmp = New-Object System.Drawing.Bitmap $w, $hh
-        $g = [System.Drawing.Graphics]::FromImage($bmp)
-        $g.CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size)
-        $bmp.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
-        "saved $Out ${w}x${hh}"
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        for ($i = 1; $i -le $Count; $i++) {
+            $bmp = New-Object System.Drawing.Bitmap $w, $hh
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size)
+            $file = if ($Count -gt 1) { $Out -replace '\.png$', "_$i.png" } else { $Out }
+            $bmp.Save($file, [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()
+            "saved $file at $($sw.ElapsedMilliseconds) ms"
+            if ($i -lt $Count) { $next = $i * $IntervalMs; while ($sw.ElapsedMilliseconds -lt $next) { Start-Sleep -Milliseconds 5 } }
+        }
     }
     "shot" {
         $h = Get-Win
         if ([W]::IsIconic($h)) { Focus-Win $h }
         $r = New-Object W+RECT; [W]::GetWindowRect($h, [ref]$r) | Out-Null
         $w = $r.R - $r.L; $hh = $r.B - $r.T
-        $bmp = New-Object System.Drawing.Bitmap $w, $hh
-        $g = [System.Drawing.Graphics]::FromImage($bmp)
-        $hdc = $g.GetHdc(); [W]::PrintWindow($h, $hdc, 2) | Out-Null; $g.ReleaseHdc($hdc)
-        $bmp.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
-        "saved $Out ${w}x${hh} at $($r.L),$($r.T)"
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        for ($i = 1; $i -le $Count; $i++) {
+            $bmp = New-Object System.Drawing.Bitmap $w, $hh
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $hdc = $g.GetHdc(); [W]::PrintWindow($h, $hdc, 2) | Out-Null; $g.ReleaseHdc($hdc)
+            $file = if ($Count -gt 1) { $Out -replace '\.png$', "_$i.png" } else { $Out }
+            $bmp.Save($file, [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()
+            "saved $file at $($sw.ElapsedMilliseconds) ms"
+            if ($i -lt $Count) { $next = $i * $IntervalMs; while ($sw.ElapsedMilliseconds -lt $next) { Start-Sleep -Milliseconds 5 } }
+        }
     }
 }

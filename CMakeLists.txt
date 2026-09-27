@@ -49,6 +49,7 @@ add_library(mk_emul_core STATIC
     src/core/FirmwareLoader.cpp
     src/core/Machine.cpp
     src/core/Disassembler.cpp
+    src/core/RealTimePacer.cpp
     src/periph/Rcc.cpp
     src/periph/Gpio.cpp
     src/periph/Usart.cpp

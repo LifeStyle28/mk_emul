@@ -9,6 +9,8 @@ Desktop emulator of **STM32F407VG** (Cortex-M4): Unicorn Engine for the CPU, a c
 - Load **ELF / HEX / BIN** or the built-in LED demo
 - In-app C editor + **Build & Load** via `arm-none-eabi-gcc`
 - Run / Pause / Step, breakpoints, registers, memory, disassembly
+- **Real-time mode** (default): 1 emulated second = 1 wall-clock second at the current HCLK;
+  also ×0.1, ×0.5, ×2, ×10 and max speed; measured speed is shown in the toolbar
 - Virtual Discovery board: PD12–PD15 LEDs, PA0 button, ADC slider
 - USART console, RCC/SysTick/NVIC/EXTI/TIM/ADC/SPI/I2C stubs (HAL-friendly ready flags)
 

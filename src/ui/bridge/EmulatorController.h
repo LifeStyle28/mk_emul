@@ -2,9 +2,11 @@
 
 #include "core/Disassembler.h"
 #include "core/Machine.h"
+#include "core/RealTimePacer.h"
 #include "toolchain/ArmGccBuilder.h"
 #include "ui/bridge/Models.h"
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QString>
 #include <QThread>
@@ -34,6 +36,7 @@ public slots:
     void requestMemory(quint32 addr);
     void requestDisasm();
     void tick();
+    void setSpeed(double speed); // 1 = real time, 0 = unlimited
 
 signals:
     void inited(bool ok, const QString &error);
@@ -42,17 +45,24 @@ signals:
     void disasmReady(const QVector<DisasmModel::Row> &rows);
     void statusChanged(const QString &text);
     void runStateChanged(bool running);
+    void speedMeasured(double speed); // emulated/real time ratio
 
 private:
     void emitSnap(bool force);
     void setRunning(bool running) {
         running_ = running;
+        ++runGen_;
         emit runStateChanged(running);
     }
+    void scheduleTick(uint64_t waitNs);
 
     Machine machine_;
     Disassembler disasm_;
     bool running_ = false;
+    quint64 runGen_ = 0;
+    RealTimePacer pacer_;
+    QElapsedTimer clock_;
+    double lastSpeed_ = -1.0;
     qint64 lastSnapMs_ = 0;
     QByteArray uartBuf_;
 };
@@ -67,6 +77,8 @@ class EmulatorController : public QObject {
     Q_PROPERTY(QString breakpointText READ breakpointText WRITE setBreakpointText NOTIFY breakpointTextChanged)
     Q_PROPERTY(QString memoryAddressText READ memoryAddressText WRITE setMemoryAddressText NOTIFY memoryAddressTextChanged)
     Q_PROPERTY(QString firmwarePath READ firmwarePath NOTIFY firmwarePathChanged)
+    Q_PROPERTY(double speed READ speed WRITE setSpeed NOTIFY speedChanged)
+    Q_PROPERTY(QString measuredSpeedText READ measuredSpeedText NOTIFY speedChanged)
 public:
     explicit EmulatorController(QObject *parent = nullptr);
     ~EmulatorController() override;
@@ -81,6 +93,10 @@ public:
     QString memoryAddressText() const { return memoryAddressText_; }
     void setMemoryAddressText(const QString &t);
     QString firmwarePath() const { return firmwarePath_; }
+    // Emulation speed: 1 = real time (default), 0.1 = slower, 10 = faster, 0 = unlimited.
+    double speed() const { return speed_; }
+    void setSpeed(double speed);
+    QString measuredSpeedText() const;
 
     RegisterModel *registerModel() { return &registers_; }
     MemoryModel *memoryModel() { return &memory_; }
@@ -109,6 +125,7 @@ signals:
     void breakpointTextChanged();
     void memoryAddressTextChanged();
     void firmwarePathChanged();
+    void speedChanged();
 
 private:
     void applySnapshot(const MachineSnapshot &snap, const QByteArray &uart);
@@ -126,6 +143,8 @@ private:
     ProjectModel project_;
     ArmGccBuilder builder_;
     bool running_ = false;
+    double speed_ = 1.0;
+    double measuredSpeed_ = 0.0;
     QString status_ = QStringLiteral("Starting…");
     QString buildLog_;
     QString pcText_ = QStringLiteral("0x00000000");
