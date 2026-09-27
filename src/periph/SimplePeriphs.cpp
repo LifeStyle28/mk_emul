@@ -43,7 +43,7 @@ void Timer::updateIrq() {
 
 uint32_t Timer::timerClock(uint32_t sysclk) const {
     (void)sysclk;
-    if (timIndex_ >= 2 && timIndex_ <= 5) // APB1
+    if (timIndex_ >= 2 && timIndex_ <= 7) // APB1
         return rcc_ ? rcc_->timclk1() : 16000000u;
     return rcc_ ? rcc_->timclk2() : 16000000u;
 }

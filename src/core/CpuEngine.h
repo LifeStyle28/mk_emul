@@ -75,7 +75,8 @@ public:
     void snapshotRegs(uint32_t out[16]) const;
     void readBanked();
 
-    enum class StopReason { None, Quantum, Breakpoint, Fault, InterruptHook, Halted };
+    // Sleep: WFI with no pending interrupt; PC is already past the WFI (see Machine).
+    enum class StopReason { None, Quantum, Breakpoint, Fault, InterruptHook, Halted, Sleep };
     enum class FaultKind { None, ReadUnmapped, WriteUnmapped, FetchUnmapped, InvalidInsn, Unaligned, NoCoprocessor, Other };
 
     StopReason run(uint64_t maxInsns);
@@ -87,6 +88,9 @@ public:
     void raiseBusFault(uint32_t addr, bool write, const std::string &reason);
     // Handler mode or CONTROL.nPRIV = 0.
     bool privileged() const { return ipsr() != 0 || (control() & 1u) == 0; }
+    // Time the core spent asleep (WFI) counts like executed cycles: timers and real-time
+    // pacing use the instruction counter as the clock.
+    void addIdleCycles(uint64_t cycles) { insnCount_ += cycles; }
 
     void addBreakpoint(uint32_t addr);
     void removeBreakpoint(uint32_t addr);
@@ -154,5 +158,10 @@ private:
     std::string lastError_;
     bool skipNextBreakpoint_ = false;
     uint32_t currentInsn_ = 0; // address of the instruction being executed (code hook)
+    // WFI instructions (halfword 0xBF30) in flash, one bit per halfword; rebuilt on every
+    // flushCodeCache(), i.e. after each firmware load.
+    std::vector<uint8_t> wfiMap_;
+    bool hasWfi_ = false;
+    uint32_t wfiAt_ = 0;
     bool rewindToCurrent_ = false;
 };

@@ -141,6 +141,49 @@ TEST_F(BuilderTest, BuildsCubeMxProjectLayout) {
     EXPECT_EQ(uart.rfind("HAL ok, SYSCLK=168000000\r\n", 0), 0u) << uart;
 }
 
+// CubeMX projects with FreeRTOS use a basic timer instead of SysTick as the HAL time base
+// (stm32f4xx_hal_timebase_tim.c): HAL_Delay must work on TIM6.
+TEST_F(BuilderTest, HalTimebaseOnTim6) {
+    const QString hal = kSource + "/examples/hal_blinky/";
+    QString conf = readText(hal + "stm32f4xx_hal_conf.h");
+    conf.replace("/* #define HAL_TIM_MODULE_ENABLED */", "#define HAL_TIM_MODULE_ENABLED");
+    ASSERT_TRUE(conf.contains("\n#define HAL_TIM_MODULE_ENABLED"));
+    QString main = readText(hal + "main.c");
+    main.replace("void SysTick_Handler(void) {\n    HAL_IncTick();\n}", "void SysTick_Handler(void) {\n}");
+    ASSERT_FALSE(main.contains("    HAL_IncTick();"));
+    const char *timebase = R"(#include "stm32f4xx_hal.h"
+TIM_HandleTypeDef htim6;
+HAL_StatusTypeDef HAL_InitTick(uint32_t TickPriority) {
+    __HAL_RCC_TIM6_CLK_ENABLE();
+    HAL_NVIC_SetPriority(TIM6_DAC_IRQn, TickPriority, 0);
+    HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn);
+    RCC_ClkInitTypeDef clk;
+    uint32_t latency;
+    HAL_RCC_GetClockConfig(&clk, &latency);
+    uint32_t tclk = HAL_RCC_GetPCLK1Freq();
+    if (clk.APB1CLKDivider != RCC_HCLK_DIV1)
+        tclk *= 2;
+    htim6.Instance = TIM6;
+    htim6.Init.Period = 1000000U / 1000U - 1U;
+    htim6.Init.Prescaler = tclk / 1000000U - 1U;
+    htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+    if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+        return HAL_ERROR;
+    return HAL_TIM_Base_Start_IT(&htim6);
+}
+void TIM6_DAC_IRQHandler(void) { HAL_TIM_IRQHandler(&htim6); }
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+    if (htim->Instance == TIM6)
+        HAL_IncTick();
+}
+)";
+    Files files{{"stm32f4xx_hal_conf.h", conf}, {"main.c", main}, {"stm32f4xx_hal_timebase_tim.c", timebase}};
+    ASSERT_TRUE(build(files, "tim6")) << log.toStdString();
+    const auto uart = runElf(elf, 40000000);
+    EXPECT_EQ(uart.rfind("HAL ok, SYSCLK=168000000\r\n", 0), 0u) << uart;
+    EXPECT_NE(uart.find("tick 2\r\n"), std::string::npos) << uart;
+}
+
 TEST_F(BuilderTest, ReportsCompileErrors) {
     Files files{{"main.c", "int main(void) { return undefined_name; }\n"}};
     EXPECT_FALSE(build(files, "error"));

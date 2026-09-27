@@ -133,7 +133,10 @@ TEST_F(FirmwareTest, FpuIrqKeepsFloatRegistersOfInterruptedCode) {
 TEST_F(FirmwareTest, Tim4PwmSetsLedBrightness) {
     load("tim4_pwm");
     float minGreen = 1.0f, maxGreen = 0.0f;
+    int asleep = 0;
+    const uint64_t start = m.cpu().instructionCount();
     auto stop = runSampling(m, 16000000, [&] { // 1 s: green ramps 0 -> 100%
+        asleep += m.snapshot().sleeping;
         const float g = m.snapshot().ledLevel[0];
         minGreen = std::min(minGreen, g);
         maxGreen = std::max(maxGreen, g);
@@ -146,6 +149,8 @@ TEST_F(FirmwareTest, Tim4PwmSetsLedBrightness) {
     EXPECT_EQ(s.leds & 0xEu, 0xEu);
     EXPECT_LT(minGreen, 0.05f);
     EXPECT_GT(maxGreen, 0.9f);
+    EXPECT_GT(asleep, 0) << "main loop sleeps in WFI between SysTick interrupts";
+    EXPECT_GE(m.cpu().instructionCount() - start, 16000000u) << "sleep time counts as cycles";
 }
 
 TEST_F(FirmwareTest, HardFaultExampleReachesHandler) {

@@ -50,6 +50,7 @@ struct MachineSnapshot {
     uint32_t cpacr = 0;
     uint64_t instructions = 0;
     std::string haltReason;
+    bool sleeping = false; // in WFI, waiting for an interrupt
     CpuEngine::StopReason stop = CpuEngine::StopReason::None;
 };
 
@@ -131,6 +132,8 @@ private:
     Timer tim3_;
     Timer tim4_;
     Timer tim5_;
+    Timer tim6_; // basic timers: HAL timebase of CubeMX FreeRTOS projects
+    Timer tim7_;
     Adc adc1_;
     Spi spi1_;
     I2c i2c1_;
@@ -144,7 +147,9 @@ private:
     bool firmwareLoaded_ = false;
     bool svcLockup_ = false;
     bool inChunk_ = false;
-    uint64_t chunkTicked_ = 0; // instructions of the current chunk already given to the timers
+    uint64_t chunkTicked_ = 0;
+    uint64_t lastChunkCycles_ = 0; // cycles of the last chunk: executed or slept in WFI
+    bool sleeping_ = false;       // WFI executed, no interrupt pending yet // instructions of the current chunk already given to the timers
     uint32_t vectorBase_ = mcu::kFlashBase;
     std::string status_ = "Idle";
     UartTx uartTx_;

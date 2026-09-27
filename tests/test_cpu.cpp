@@ -94,6 +94,19 @@ TEST_F(MachineTest, BreakpointStopsBeforeTheInstruction) {
     EXPECT_EQ(m.runQuantum(100), CpuEngine::StopReason::Quantum);
 }
 
+// 0x80: SysTick LOAD = 100, CTRL = 7 (HCLK, TICKINT, ENABLE); loop: wfi ; adds r3,#1 ; b loop
+// 0x90: SysTick_Handler: adds r4,#1 ; bx lr
+TEST_F(MachineTest, WfiWaitsForInterrupt) {
+    FlashImage img;
+    img.word(F, kStackTop).vector(1, F + 0x80).vector(15, F + 0x90);
+    img.thumb(F + 0x80, {0x4905, 0x2064, 0x6048, 0x2007, 0x6008, 0xBF30, 0x3301, 0xE7FC, 0x3401, 0x4770});
+    img.word(F + 0x98, 0xE000E010u);
+    loadImage(m, img);
+    EXPECT_NE(runFor(m, 5000), CpuEngine::StopReason::Fault) << m.status();
+    EXPECT_GE(r(4), 5u) << "SysTick interrupts wake the core";
+    EXPECT_LE(r(3), r(4) + 1) << "one loop iteration per interrupt: WFI sleeps until the next one";
+}
+
 // 0x40: ldr r1,=0x40026010 (DMA1, not emulated) ; str r0,[r1] ; ldr r2,[r1] ; str r0,[r1] ; b .
 TEST_F(MachineTest, WarnsOnceAboutUnemulatedPeripheral) {
     std::vector<std::string> warnings;

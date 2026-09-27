@@ -102,7 +102,7 @@ bool Rcc::usartEnabled(int index) const {
 bool Rcc::timEnabled(int index) const {
     if (index == 2)
         return (apb1enr_ & (1u << 0)) != 0;
-    if (index >= 3 && index <= 5)
+    if (index >= 3 && index <= 7) // TIM3EN..TIM7EN = APB1ENR bits 1..5
         return (apb1enr_ & (1u << (index - 2))) != 0;
     return false;
 }

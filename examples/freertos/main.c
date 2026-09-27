@@ -1,7 +1,7 @@
 // FreeRTOS (port GCC/ARM_CM4F) on the emulator: tasks on PSP, SVC starts the first task,
 // PendSV switches context, SysTick drives the tick, the FPU context of each task is saved
 // (lazy stacking) and an interrupt gives a semaphore through the ...FromISR API.
-// Kernel sources: third_party/freertos (FreeRTOS-Kernel, see docs/TODO.md).
+// Kernel: device/stm32f407/freertos (Build & Load adds it because of FreeRTOSConfig.h).
 // Expected in the emulator:
 //   UART: "FreeRTOS start" then "rx N a=.. b=.." every 100 ms (N = 1, 2, 3, ...),
 //   green LED (PD12) blinks every 50 ms, USER button toggles the orange LED (PD13).

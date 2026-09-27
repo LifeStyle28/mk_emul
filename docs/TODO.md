@@ -1,48 +1,39 @@
 # Что осталось сделать
 
-Состояние на 27.09.2026 (ветка `my-version`). Сделанное — в [CHANGELOG.md](../CHANGELOG.md).
-Уже работает и проверено: ядро Cortex-M4 (прерывания, приоритеты, SVC/PendSV, FPU, CPACR/NOCP,
-PSP и непривилегированный режим), таймеры, UART, EXTI, режим реального времени, весь ручной
-чек-лист `docs/MANUAL_TESTING.md`, проект на STM32CubeF4 HAL `examples/hal_blinky`, FreeRTOS `examples/freertos`, ШИМ на TIM4 `examples/tim4_pwm` (91 автотест).
+Состояние на 28.09.2026 (ветка `my-version`). Сделанное — в [CHANGELOG.md](../CHANGELOG.md).
+Всё из прошлого списка сделано: HAL- и FreeRTOS-проекты собираются кнопкой Build & Load (HAL,
+CMSIS и FreeRTOS лежат в `device/stm32f407`), TIM4 с ШИМ, TIM5–TIM7, предупреждения о
+неэмулируемой периферии, BusFault при непривилегированном доступе к NVIC/SCB, FPDSCR,
+автоочистка консоли, блокировка Build & Load. 102 автотеста, ручной чек-лист обновлён.
 
-## 1. Проверить на «настоящих» прошивках (главный риск)
-- [x] **Проект на STM32CubeF4 HAL** — `examples/hal_blinky`, тесты `HalFirmwareTest.*`
-      (понадобился bit-band и символ `end` в линкер-скрипте, см. CHANGELOG).
-      Исходники HAL кладутся в `third_party/stm32cube/` (не в git): клоны
-      github.com/STMicroelectronics/stm32f4xx_hal_driver, cmsis_device_f4 и cmsis_core.
-- [x] **FreeRTOS** — `examples/freertos`, тесты `FreeRtosFirmwareTest.*`; эмулятор менять
-      не пришлось. Ядро: `git clone --depth 1 --branch V11.1.0
-      https://github.com/FreeRTOS/FreeRTOS-Kernel.git third_party/freertos`.
-- [ ] **Build & Load для HAL- и FreeRTOS-проектов в приложении.** `ArmGccBuilder` знает только
-      `device/stm32f407/include`, поэтому `examples/hal_blinky` и `examples/freertos`, открытые в
-      окне, не соберутся. Вариант: поставлять HAL (BSD-3) и FreeRTOS (MIT) рядом с `device/`
-      и добавлять их `-I`/исходники, если в папке проекта есть `stm32f4xx_hal_conf.h` /
-      `FreeRTOSConfig.h`.
+## Решения, принятые по ходу
+- **Консоль UART** очищается при загрузке новой прошивки (Build & Load, Open FW…, Builtin LED),
+  но не при Reset: после Reset удобно сравнить вывод со старым.
+- **HAL и FreeRTOS в репозитории** (`device/stm32f407/cube`, `device/stm32f407/freertos`,
+  около 13 МБ, в git ~2 МБ): иначе Build & Load не работает «из коробки». Версии и лицензии —
+  `device/stm32f407/THIRD_PARTY.md`.
+- **Startup проекта CubeMX заменяется** на startup эмулятора (он такой же для F407 и точно
+  совпадает с линкер-скриптом эмулятора), линкер-скрипт тоже всегда свой.
+- **Сдача**: ветка `my-version` целиком (история коммитов по шагам + CHANGELOG). Pull request
+  в `main` своего форка по желанию: `gh pr create --base main --head my-version`.
 
-## 2. Пробелы в эмуляции, заметные студенту
-- [x] **TIM4 и ШИМ** на PD12–PD15 — `examples/tim4_pwm`, яркость светодиода = скважность.
-      Добавлены TIM4 и TIM5. Не сделано: TIM1/TIM8 (нужны BDTR.MOE и APB2), флаги CCxIF и
-      прерывания по сравнению, режимы toggle/match, preload CCR/ARR (запись действует сразу).
-- [x] **Предупреждение об обращении к неэмулируемой периферии** — в панели Build log:
-      «emulator warning: write to unemulated peripheral DMA1 @ 0x40026010 (value dropped)».
-      Не ловится: нереализованный регистр внутри эмулируемого блока (например, TIMx->BDTR).
-- [ ] Непривилегированный код может обращаться к NVIC/SCB и периферии; на МК это BusFault.
-- [ ] FPDSCR хранится, но не применяется к новому FP-контексту (редкий случай).
-
-## 3. Интерфейс
-- [ ] Консоль UART не очищается при загрузке другой прошивки (есть кнопка Clear) — **решить**:
-      очищать автоматически или нет.
-- [ ] Build & Load, нажатый сразу после выбора папки в диалоге, может собрать предыдущий проект
-      (видно только при автоматизации, быстрее 1,2 с). Если всплывёт у людей — блокировать кнопку,
-      пока открыт диалог.
-
-## 4. Сдача
-- [ ] Краткая сводка в начале CHANGELOG: таблица «исправлено / добавлено / чем проверено».
-- [ ] Решить форму сдачи: pull request `my-version` → `main` или просто ветка.
-- [ ] Перед сдачей: `scripts\test.bat` (все тесты зелёные) и прогон `docs/MANUAL_TESTING.md`.
+## Можно сделать дальше (не обязательно)
+- TIM1/TIM8 (продвинутые таймеры: BDTR.MOE, APB2), TIM9–TIM14; флаги CCxIF и прерывания по
+  сравнению; режимы toggle/match; preload CCR/ARR (сейчас запись действует сразу).
+- DMA (HAL_UART_Transmit_DMA, ADC по DMA) — самый частый «следующий шаг» в учебных проектах.
+- WFI/WFE: сейчас выполняются как NOP (цикл `for (;;) __WFI();` просто крутится).
+- Нереализованный регистр внутри эмулируемого блока (например, `TIMx->BDTR`) не даёт
+  предупреждения — только целиком отсутствующие блоки.
+- FPDSCR: у задачи/потока без FP-контекста после возврата из обработчика FPSCR остаётся
+  значением обработчика (на МК следующая FP-инструкция взяла бы FPDSCR).
+- `NVIC->STIR` из непривилегированного кода при `CCR.USERSETMPEND = 1` тоже даёт BusFault
+  (на МК разрешено).
+- Обёртка CMSIS-RTOS2 (`cmsis_os2.c` из CubeMX) не проверялась.
 
 ## Полезное для продолжения
 - Сборка `scripts\build.bat`, тесты `scripts\test.bat`, UI-автоматизация `scripts\ui.ps1`.
 - Бенчмарк скорости: `build\tests\mk_emul_tests --gtest_also_run_disabled_tests --gtest_filter=*Speed*`.
   Сравнивать версии только попеременными прогонами и медианами (разброс одиночных ±10%).
+  Последний замер: blinky 137, uart_printf 146, systick_exti 109, fpu_irq 36 MIPS.
 - Маленькие программы для тестов ядра: `tests/asm/*.s` → `py tests/asm/gen.py`.
+- Тесты сборщика (как Build & Load): `build\tests\mk_emul_builder_tests.exe`.

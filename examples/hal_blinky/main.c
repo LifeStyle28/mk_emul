@@ -1,7 +1,7 @@
 // STM32CubeF4 HAL project, the way CubeMX generates it: 168 MHz from HSE through the PLL,
 // HAL_Delay on SysTick, USART2 through HAL_UART_Transmit, USER button (PA0) through EXTI.
-// Built with the real ST HAL (third_party/stm32cube, see docs/TODO.md), not the emulator's
-// own headers. Expected in the emulator:
+// Built with the real ST HAL bundled in device/stm32f407/cube (Build & Load picks it because
+// of stm32f4xx_hal_conf.h), not the emulator's own headers. Expected in the emulator:
 //   UART: "HAL ok, SYSCLK=168000000" then "tick N" every 100 ms,
 //   green LED (PD12) blinks, USER button toggles the red LED (PD14).
 // If any HAL call fails (e.g. a ready flag never set), Error_Handler turns on the blue LED

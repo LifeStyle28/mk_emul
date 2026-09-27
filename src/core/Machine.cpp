@@ -22,6 +22,8 @@ Machine::Machine()
     , tim3_("TIM3", mcu::kTim3Base, mcu::kIrqTim3, 3, &rcc_, &nvic_)
     , tim4_("TIM4", mcu::kTim4Base, mcu::kIrqTim4, 4, &rcc_, &nvic_)
     , tim5_("TIM5", mcu::kTim5Base, mcu::kIrqTim5, 5, &rcc_, &nvic_)
+    , tim6_("TIM6", mcu::kTim6Base, mcu::kIrqTim6Dac, 6, &rcc_, &nvic_)
+    , tim7_("TIM7", mcu::kTim7Base, mcu::kIrqTim7, 7, &rcc_, &nvic_)
     , adc1_(&rcc_, &nvic_)
     , spi1_("SPI1", mcu::kSpi1Base, mcu::kIrqSpi1, &rcc_, &nvic_)
     , i2c1_("I2C1", mcu::kI2c1Base, mcu::kIrqI2c1Ev, mcu::kIrqI2c1Er, &rcc_, &nvic_)
@@ -59,6 +61,8 @@ void Machine::wirePeripherals() {
     bus_.add(&tim3_);
     bus_.add(&tim4_);
     bus_.add(&tim5_);
+    bus_.add(&tim6_);
+    bus_.add(&tim7_);
     bus_.add(&adc1_);
     bus_.add(&spi1_);
     bus_.add(&i2c1_);
@@ -134,6 +138,7 @@ void Machine::reset() {
 
 void Machine::resetMcu() {
     reportedUnmapped_.clear();
+    sleeping_ = false;
     rcc_.reset();
     nvic_.reset();
     systick_.reset();
@@ -149,6 +154,8 @@ void Machine::resetMcu() {
     tim3_.reset();
     tim4_.reset();
     tim5_.reset();
+    tim6_.reset();
+    tim7_.reset();
     adc1_.reset();
     spi1_.reset();
     i2c1_.reset();
@@ -304,6 +311,8 @@ void Machine::tickPeripherals(uint32_t insns) {
     tim3_.tick(insns, rcc_.sysclk());
     tim4_.tick(insns, rcc_.sysclk());
     tim5_.tick(insns, rcc_.sysclk());
+    tim6_.tick(insns, rcc_.sysclk());
+    tim7_.tick(insns, rcc_.sysclk());
 }
 
 void Machine::syncTimers() {
@@ -361,14 +370,36 @@ uint32_t Machine::cyclesToNextEvent() const {
     const uint32_t sys = rcc_.sysclk();
     const uint64_t c = std::min({systick_.cyclesUntilInterrupt(sys), tim2_.cyclesUntilInterrupt(sys),
                                  tim3_.cyclesUntilInterrupt(sys), tim4_.cyclesUntilInterrupt(sys),
-                                 tim5_.cyclesUntilInterrupt(sys)});
+                                 tim5_.cyclesUntilInterrupt(sys), tim6_.cyclesUntilInterrupt(sys),
+                                 tim7_.cyclesUntilInterrupt(sys)});
     return c > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(c);
 }
 
 CpuEngine::StopReason Machine::runChunk(uint32_t n) {
+    if (sleeping_) {
+        // WFI: the core waits for an interrupt; time runs on to the next timer event (or n
+        // cycles, e.g. while waiting for the USER button). Pending interrupts wake it.
+        if (!*nvic_.pendingFlag()) {
+            const uint32_t idle = std::max(1u, std::min(n, cyclesToNextEvent()));
+            tickPeripherals(idle);
+            cpu_.addIdleCycles(idle);
+            lastChunkCycles_ = idle;
+        } else {
+            lastChunkCycles_ = 0;
+        }
+        if (*nvic_.pendingFlag())
+            sleeping_ = false;
+        nvic_.service(cpu_);
+        return CpuEngine::StopReason::Quantum;
+    }
     inChunk_ = true;
     chunkTicked_ = 0;
-    const auto r = cpu_.run(n);
+    auto r = cpu_.run(n);
+    lastChunkCycles_ = cpu_.lastRunCount();
+    if (r == CpuEngine::StopReason::Sleep) {
+        sleeping_ = true;
+        r = CpuEngine::StopReason::Quantum;
+    }
     syncTimers(); // the rest of the chunk
     inChunk_ = false;
     if (svcLockup_) {
@@ -412,7 +443,7 @@ CpuEngine::StopReason Machine::runQuantum(uint32_t insns) {
             return last;
         if (last == CpuEngine::StopReason::Breakpoint)
             break;
-        const uint32_t done = static_cast<uint32_t>(cpu_.lastRunCount());
+        const uint32_t done = static_cast<uint32_t>(lastChunkCycles_); // executed + slept
         if (done == 0) {
             // Stopped before the first instruction to take an interrupt (runChunk entered it).
             if (++idle > 4)
@@ -422,7 +453,7 @@ CpuEngine::StopReason Machine::runQuantum(uint32_t insns) {
         idle = 0;
         left -= std::min(left, done);
     }
-    status_ = last == CpuEngine::StopReason::Breakpoint ? "Breakpoint" : "Running";
+    status_ = last == CpuEngine::StopReason::Breakpoint ? "Breakpoint" : sleeping_ ? "Running (WFI sleep)" : "Running";
     return last;
 }
 
@@ -470,6 +501,7 @@ MachineSnapshot Machine::snapshot() const {
     s.cpacr = nvic_.debugCpacr();
     s.instructions = cpu_.instructionCount();
     s.haltReason = status_;
+    s.sleeping = sleeping_;
     s.stop = cpu_.lastStop();
     return s;
 }

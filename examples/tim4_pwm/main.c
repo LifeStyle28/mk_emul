@@ -43,5 +43,6 @@ int main(void) {
     SysTick_Config(16000); // 1 ms
 
     for (;;) {
+        __WFI(); // sleep until the next SysTick interrupt; TIM4 keeps generating the PWM
     }
 }

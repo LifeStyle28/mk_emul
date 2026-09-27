@@ -146,6 +146,19 @@ void CpuEngine::flushCodeCache() {
     // without this, code of the previous firmware keeps running at the same addresses.
     if (uc_)
         uc_ctl_flush_tb(uc_);
+    // Find WFI instructions (Thumb 0xBF30) in flash. A data word that happens to contain it
+    // matters only if code executes it, and then it is a WFI.
+    constexpr uint32_t kFlash = 0x08000000u, kFlashSize = 1024u * 1024u;
+    wfiMap_.assign(kFlashSize / 16, 0);
+    hasWfi_ = false;
+    if (const uint8_t *p = hostPtr(kFlash, kFlashSize)) {
+        for (uint32_t off = 0; off < kFlashSize; off += 2) {
+            if (p[off] == 0x30 && p[off + 1] == 0xBF) {
+                wfiMap_[off >> 4] |= static_cast<uint8_t>(1u << ((off >> 1) & 7));
+                hasWfi_ = true;
+            }
+        }
+    }
 }
 
 void CpuEngine::readMem(uint32_t addr, void *data, size_t size) const {
@@ -336,6 +349,17 @@ void CpuEngine::installHooks() {
                         uc_emu_stop(uc);
                         return;
                     }
+                    // WFI: sleep unless an interrupt is already pending (then it is a NOP).
+                    if (size == 2 && cpu->hasWfi_) {
+                        const uint32_t off = static_cast<uint32_t>(address) - 0x08000000u;
+                        if (off < cpu->wfiMap_.size() * 16 && ((cpu->wfiMap_[off >> 4] >> ((off >> 1) & 7)) & 1) &&
+                            !(cpu->irqPendingFlag_ && *cpu->irqPendingFlag_)) {
+                            cpu->wfiAt_ = static_cast<uint32_t>(address);
+                            cpu->lastStop_ = StopReason::Sleep;
+                            uc_emu_stop(uc);
+                            return;
+                        }
+                    }
                     cpu->currentInsn_ = static_cast<uint32_t>(address);
                     ++cpu->runExecuted_;
                 },
@@ -386,6 +410,10 @@ CpuEngine::StopReason CpuEngine::run(uint64_t maxInsns) {
     // count = 0: the code hook above enforces maxInsns and keeps the exact count.
     rewindToCurrent_ = false;
     const uc_err err = uc_emu_start(uc_, start, 0, 0, 0);
+    if (lastStop_ == StopReason::Sleep) {
+        setPc(wfiAt_ + 2); // the WFI itself completes; the core sleeps after it
+        ++runExecuted_;
+    }
     if (rewindToCurrent_) {
         // Precise fault: the faulting instruction did not complete.
         rewindToCurrent_ = false;
