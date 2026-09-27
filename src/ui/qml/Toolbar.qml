@@ -6,6 +6,9 @@ ToolBar {
     id: bar
     signal openFirmware()
     signal openProject()
+    // A file/folder dialog is open: Build & Load waits, otherwise it could build the previous
+    // project before the dialog's choice arrives.
+    property bool dialogOpen: false
     padding: 8
     background: Rectangle {
         color: Theme.header
@@ -71,7 +74,12 @@ ToolBar {
         AppButton { text: "Builtin LED"; onClicked: emulator.loadBuiltin() }
         AppButton { text: "Open FW…"; onClicked: bar.openFirmware() }
         AppButton { text: "Open project…"; onClicked: bar.openProject() }
-        AppButton { text: "Build & Load"; primary: true; onClicked: emulator.compileAndLoad() }
+        AppButton {
+            text: emulator.building ? "Building…" : "Build & Load"
+            primary: true
+            enabled: !emulator.building && !bar.dialogOpen
+            onClicked: emulator.compileAndLoad()
+        }
 
         Rectangle { width: 1; height: 18; color: Theme.border; Layout.leftMargin: 4; Layout.rightMargin: 4 }
 

@@ -8,6 +8,7 @@
 
 #include <QElapsedTimer>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 #include <QThread>
 #include <QTimer>
@@ -47,9 +48,11 @@ signals:
     void runStateChanged(bool running);
     void speedMeasured(double speed); // emulated/real time ratio
     void warning(const QString &text);
+    void consoleCleared();
 
 private:
     void emitSnap(bool force);
+    void clearConsole();
     void setRunning(bool running) {
         running_ = running;
         ++runGen_;
@@ -74,6 +77,7 @@ class EmulatorController : public QObject {
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(QString haltReason READ haltReason NOTIFY statusChanged)
     Q_PROPERTY(QString buildLog READ buildLog NOTIFY buildLogChanged)
+    Q_PROPERTY(bool building READ building NOTIFY buildingChanged)
     Q_PROPERTY(QString pcText READ pcText NOTIFY statusChanged)
     Q_PROPERTY(QString breakpointText READ breakpointText WRITE setBreakpointText NOTIFY breakpointTextChanged)
     Q_PROPERTY(QString memoryAddressText READ memoryAddressText WRITE setMemoryAddressText NOTIFY memoryAddressTextChanged)
@@ -88,6 +92,7 @@ public:
     QString status() const { return status_; }
     QString haltReason() const { return status_; }
     QString buildLog() const { return buildLog_; }
+    bool building() const { return building_; }
     QString pcText() const { return pcText_; }
     QString breakpointText() const { return breakpointText_; }
     void setBreakpointText(const QString &t);
@@ -123,6 +128,7 @@ signals:
     void runningChanged();
     void statusChanged();
     void buildLogChanged();
+    void buildingChanged();
     void breakpointTextChanged();
     void memoryAddressTextChanged();
     void firmwarePathChanged();
@@ -144,6 +150,8 @@ private:
     ProjectModel project_;
     ArmGccBuilder builder_;
     bool running_ = false;
+    bool building_ = false;
+    QPointer<QThread> buildThread_; // a running build is waited for on exit
     double speed_ = 1.0;
     double measuredSpeed_ = 0.0;
     QString status_ = QStringLiteral("Starting…");

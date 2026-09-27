@@ -117,6 +117,8 @@ void MachineWorker::tick() {
 void MachineWorker::loadPath(const QString &path) {
     setRunning(false);
     auto img = machine_.loadFirmware(path.toStdString());
+    if (img.ok)
+        clearConsole();
     emitSnap(true);
     requestDisasm();
     emit statusChanged(QString::fromStdString(img.ok ? machine_.status() : img.error));
@@ -125,9 +127,17 @@ void MachineWorker::loadPath(const QString &path) {
 void MachineWorker::loadBuiltin() {
     setRunning(false);
     machine_.loadBuiltinBlinky();
+    clearConsole();
     emitSnap(true);
     requestDisasm();
     emit statusChanged(QString::fromStdString(machine_.status()));
+}
+
+// A new firmware starts with an empty UART console. Bytes of the previous firmware that are
+// still buffered are dropped here, and the signal is queued after the snapshots already sent.
+void MachineWorker::clearConsole() {
+    uartBuf_.clear();
+    emit consoleCleared();
 }
 
 void MachineWorker::setButton(bool pressed) { machine_.setButtonPressed(pressed); }
@@ -181,6 +191,7 @@ EmulatorController::EmulatorController(QObject *parent)
         emit statusChanged();
     });
     connect(worker_, &MachineWorker::snapshotReady, this, &EmulatorController::applySnapshot);
+    connect(worker_, &MachineWorker::consoleCleared, &uart_, &UartModel::clear);
     // Emulator warnings (e.g. access to an unemulated peripheral) go to the build log panel.
     connect(worker_, &MachineWorker::warning, this, [this](const QString &text) {
         if (!buildLog_.isEmpty() && !buildLog_.endsWith('\n'))
@@ -228,6 +239,8 @@ EmulatorController::EmulatorController(QObject *parent)
 }
 
 EmulatorController::~EmulatorController() {
+    if (buildThread_)
+        buildThread_->wait(); // it uses builder_ and posts back to this object
     QMetaObject::invokeMethod(worker_, "pause", Qt::BlockingQueuedConnection);
     workerThread_.quit();
     workerThread_.wait();
@@ -385,17 +398,35 @@ void EmulatorController::attachHighlighter(QQuickTextDocument *doc) {
 }
 
 void EmulatorController::compileAndLoad() {
+    if (building_)
+        return;
     project_.saveAll();
     const QString work = dataRoot_ + "/project_build";
     const QString device = dataRoot_ + "/device/stm32f407";
-    QString elf;
-    QString log;
-    const bool ok = builder_.compile(project_.files(), work, device, &elf, &log);
-    buildLog_ = log;
+    const auto files = project_.files();
+    building_ = true;
+    emit buildingChanged();
+    buildLog_ = QStringLiteral("Building…\n");
     emit buildLogChanged();
-    if (ok) {
-        firmwarePath_ = elf;
-        emit firmwarePathChanged();
-        QMetaObject::invokeMethod(worker_, "loadPath", Qt::QueuedConnection, Q_ARG(QString, elf));
-    }
+    // The first build of a HAL / FreeRTOS project compiles the libraries (a few seconds):
+    // run gcc off the UI thread so the window stays responsive.
+    QThread *thread = QThread::create([this, files, work, device] {
+        QString elf;
+        QString log;
+        const bool ok = builder_.compile(files, work, device, &elf, &log);
+        QMetaObject::invokeMethod(this, [this, ok, elf, log] {
+            building_ = false;
+            emit buildingChanged();
+            buildLog_ = log;
+            emit buildLogChanged();
+            if (ok) {
+                firmwarePath_ = elf;
+                emit firmwarePathChanged();
+                QMetaObject::invokeMethod(worker_, "loadPath", Qt::QueuedConnection, Q_ARG(QString, elf));
+            }
+        }, Qt::QueuedConnection);
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    buildThread_ = thread;
+    thread->start();
 }

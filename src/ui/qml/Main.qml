@@ -40,6 +40,7 @@ ApplicationWindow {
     }
 
     header: Toolbar {
+        dialogOpen: firmwareDialog.visible || folderDialog.visible
         onOpenFirmware: firmwareDialog.open()
         onOpenProject: folderDialog.open()
     }

@@ -166,12 +166,9 @@ TEST_F(FirmwareTest, HardFaultExampleReachesHandler) {
 // Any failed HAL call lands in Error_Handler, which turns on the blue LED (PD15).
 struct HalFirmwareTest : FirmwareTest {
     void SetUp() override {
-#ifndef MK_EMUL_HAVE_CUBE_HAL
-        GTEST_SKIP() << "third_party/stm32cube (ST HAL) not found at configure time";
-#else
         FirmwareTest::SetUp();
-        load("hal_blinky");
-#endif
+        if (!IsSkipped())
+            load("hal_blinky");
     }
 };
 
@@ -205,12 +202,9 @@ TEST_F(HalFirmwareTest, ButtonTogglesRedLedThroughExtiCallback) {
 // loops, so a lost FPU context shows up as a wrong sum. Errors turn on the red LED (PD14).
 struct FreeRtosFirmwareTest : FirmwareTest {
     void SetUp() override {
-#ifndef MK_EMUL_HAVE_FREERTOS
-        GTEST_SKIP() << "third_party/freertos (FreeRTOS-Kernel) not found at configure time";
-#else
         FirmwareTest::SetUp();
-        load("freertos");
-#endif
+        if (!IsSkipped())
+            load("freertos");
     }
 };
 
