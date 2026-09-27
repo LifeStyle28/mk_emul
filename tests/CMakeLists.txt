@@ -96,6 +96,39 @@ if(MK_EMUL_ARM_GCC)
         message(STATUS "mk_emul tests: third_party/stm32cube not found, HAL firmware test will be skipped")
     endif()
 
+    # examples/freertos: FreeRTOS-Kernel in third_party/freertos (not in the repo). Skipped if absent.
+    set(RTOS_DIR ${CMAKE_SOURCE_DIR}/third_party/freertos)
+    if(EXISTS ${RTOS_DIR}/tasks.c)
+        set(RTOS_PORT ${RTOS_DIR}/portable/GCC/ARM_CM4F)
+        set(RTOS_SOURCES ${RTOS_DIR}/tasks.c ${RTOS_DIR}/queue.c ${RTOS_DIR}/list.c
+                         ${RTOS_PORT}/port.c ${RTOS_DIR}/portable/MemMang/heap_4.c)
+        set(elf ${FW_DIR}/freertos.elf)
+        add_custom_command(OUTPUT ${elf}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${FW_DIR}
+            COMMAND ${MK_EMUL_ARM_GCC}
+                -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard -g3 -O0
+                -I${DEVICE_DIR}/include -DSTM32F407xx
+                -I${CMAKE_SOURCE_DIR}/examples/freertos -I${RTOS_DIR}/include -I${RTOS_PORT}
+                -nostartfiles -T ${DEVICE_DIR}/STM32F407VGTx_FLASH.ld -Wl,--gc-sections --specs=nano.specs
+                ${CMAKE_SOURCE_DIR}/examples/freertos/main.c
+                ${DEVICE_DIR}/startup_stm32f407xx.s
+                ${DEVICE_DIR}/system_stm32f4xx.c
+                ${RTOS_SOURCES}
+                -o ${elf} -lc -lm -lnosys
+            DEPENDS ${CMAKE_SOURCE_DIR}/examples/freertos/main.c
+                    ${CMAKE_SOURCE_DIR}/examples/freertos/FreeRTOSConfig.h
+                    ${DEVICE_DIR}/startup_stm32f407xx.s
+                    ${DEVICE_DIR}/system_stm32f4xx.c
+                    ${DEVICE_DIR}/STM32F407VGTx_FLASH.ld
+                    ${DEVICE_HEADERS} ${RTOS_SOURCES}
+            COMMENT "Building test firmware freertos.elf (FreeRTOS-Kernel)"
+            VERBATIM)
+        list(APPEND FW_ELFS ${elf})
+        target_compile_definitions(mk_emul_tests PRIVATE MK_EMUL_HAVE_FREERTOS=1)
+    else()
+        message(STATUS "mk_emul tests: third_party/freertos not found, FreeRTOS firmware test will be skipped")
+    endif()
+
     add_custom_target(mk_emul_test_firmware ALL DEPENDS ${FW_ELFS})
     add_dependencies(mk_emul_tests mk_emul_test_firmware)
     target_compile_definitions(mk_emul_tests PRIVATE MK_EMUL_FW_DIR="${FW_DIR}")

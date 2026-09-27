@@ -174,6 +174,47 @@ TEST_F(HalFirmwareTest, ButtonTogglesRedLedThroughExtiCallback) {
     EXPECT_FALSE(m.snapshot().leds & 0x8) << "Error_Handler reached";
 }
 
+// FreeRTOS, port ARM_CM4F: SVC starts the first task, PendSV switches tasks on PSP, SysTick
+// ticks at 1 kHz (16k cycles). Two same-priority tasks are time sliced in the middle of float
+// loops, so a lost FPU context shows up as a wrong sum. Errors turn on the red LED (PD14).
+struct FreeRtosFirmwareTest : FirmwareTest {
+    void SetUp() override {
+#ifndef MK_EMUL_HAVE_FREERTOS
+        GTEST_SKIP() << "third_party/freertos (FreeRTOS-Kernel) not found at configure time";
+#else
+        FirmwareTest::SetUp();
+        load("freertos");
+#endif
+    }
+};
+
+TEST_F(FreeRtosFirmwareTest, TasksQueueAndFpuContext) {
+    // 100 ms = 1.6M cycles per queue item; 8M covers ~5 items and 10 blinks.
+    CpuEngine::StopReason stop;
+    const int toggles = countLedToggles(8000000, 0x1, &stop);
+    EXPECT_NE(stop, CpuEngine::StopReason::Fault) << m.status();
+    EXPECT_FALSE(m.snapshot().leds & 0x4) << "error, uart: " << uart;
+    EXPECT_EQ(uart.rfind("FreeRTOS start\r\n", 0), 0u) << "got: " << uart;
+    EXPECT_NE(uart.find("rx 4 "), std::string::npos) << "got: " << uart;
+    EXPECT_EQ(uart.find("a=0 "), std::string::npos) << "cruncher a never ran: " << uart;
+    EXPECT_EQ(uart.find("b=0\r"), std::string::npos) << "cruncher b never ran: " << uart;
+    EXPECT_GE(toggles, 6);
+}
+
+TEST_F(FreeRtosFirmwareTest, ButtonGivesSemaphoreFromIsr) {
+    runFor(m, 500000); // scheduler started
+    const bool orange = m.snapshot().leds & 0x2;
+    m.setButtonPressed(true);
+    runFor(m, 100000);
+    EXPECT_NE(static_cast<bool>(m.snapshot().leds & 0x2), orange) << "press must toggle PD13";
+    m.setButtonPressed(false);
+    runFor(m, 100000);
+    m.setButtonPressed(true);
+    runFor(m, 100000);
+    EXPECT_EQ(static_cast<bool>(m.snapshot().leds & 0x2), orange) << "second press toggles back";
+    EXPECT_FALSE(m.snapshot().leds & 0x4) << "error, uart: " << uart;
+}
+
 // Emulation speed at Max (no pacing), in millions of instructions per second. Not a check, so
 // disabled by default; run with:
 //   build\tests\mk_emul_tests --gtest_also_run_disabled_tests --gtest_filter=*Speed*

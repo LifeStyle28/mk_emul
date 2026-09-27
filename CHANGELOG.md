@@ -464,6 +464,23 @@ MSP/PSP/CONTROL/PRIMASK и читает их как 0, пока процессо
 `device/stm32f407/STM32F407VGTx_FLASH.ld`, `examples/hal_blinky/`, `tests/CMakeLists.txt`,
 `tests/test_firmware.cpp`, `tests/test_periph_regs.cpp`.
 
+## Проверка на FreeRTOS
+
+Новый пример `examples/freertos` — FreeRTOS-Kernel V11.1.0, порт `GCC/ARM_CM4F`, `heap_4`
+(ядро в репозиторий не входит, клонируется в `third_party/freertos`, папка в `.gitignore`).
+Шесть задач: две вычислительные с одинаковым приоритетом делят процессор по тикам прямо внутри
+float-цикла (проверка FPU-контекста задач и lazy stacking на PSP), мигание через `vTaskDelay`,
+производитель и потребитель очереди (`vTaskDelayUntil` каждые 100 мс, вывод в UART), задача,
+ждущая семафор от кнопки: `EXTI0_IRQHandler` с приоритетом 6 отдаёт его через
+`xSemaphoreGiveFromISR`. `configASSERT` включён: порт при старте проверяет приоритеты
+через регистры NVIC/SCB. Любая ошибка зажигает красный светодиод и пишет причину в UART.
+
+Всё заработало без изменений эмулятора. Вывод UART за 0,5 с модельного времени:
+`rx 1 a=17 b=17` … `rx 4 a=71 b=71` (a и b — раунды двух вычислительных задач, поровну).
+
+Тесты: `FreeRtosFirmwareTest.TasksQueueAndFpuContext`, `FreeRtosFirmwareTest.ButtonGivesSemaphoreFromIsr`
+(пропускаются, если ядро не скачано). Итого 86 тестов.
+
 ## Известные ограничения (кандидаты на доработку)
 
 - Непривилегированный код может обращаться к NVIC/SCB и периферии; на настоящем МК обращение к

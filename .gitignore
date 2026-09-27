@@ -28,3 +28,4 @@ __pycache__/
 Thumbs.db
 aqtinstall.log
 /third_party/stm32cube/
+/third_party/freertos/

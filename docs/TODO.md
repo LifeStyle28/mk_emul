@@ -3,19 +3,21 @@
 Состояние на 27.09.2026 (ветка `my-version`). Сделанное — в [CHANGELOG.md](../CHANGELOG.md).
 Уже работает и проверено: ядро Cortex-M4 (прерывания, приоритеты, SVC/PendSV, FPU, CPACR/NOCP,
 PSP и непривилегированный режим), таймеры, UART, EXTI, режим реального времени, весь ручной
-чек-лист `docs/MANUAL_TESTING.md`, проект на STM32CubeF4 HAL `examples/hal_blinky` (84 автотеста).
+чек-лист `docs/MANUAL_TESTING.md`, проект на STM32CubeF4 HAL `examples/hal_blinky`, FreeRTOS `examples/freertos` (86 автотестов).
 
 ## 1. Проверить на «настоящих» прошивках (главный риск)
 - [x] **Проект на STM32CubeF4 HAL** — `examples/hal_blinky`, тесты `HalFirmwareTest.*`
       (понадобился bit-band и символ `end` в линкер-скрипте, см. CHANGELOG).
       Исходники HAL кладутся в `third_party/stm32cube/` (не в git): клоны
       github.com/STMicroelectronics/stm32f4xx_hal_driver, cmsis_device_f4 и cmsis_core.
-- [ ] **Build & Load для HAL-проектов в приложении.** `ArmGccBuilder` знает только
-      `device/stm32f407/include`, поэтому `examples/hal_blinky`, открытый в окне, не соберётся.
-      Варианты: положить HAL рядом с `device/` (≈ лицензия BSD-3, можно) и добавлять
-      `-I`/исходники HAL, если в папке проекта есть `stm32f4xx_hal_conf.h`.
-- [ ] **FreeRTOS**: две задачи с `vTaskDelay`, очередь или семафор. Проверяет SVC, PendSV,
-      переключение контекста на PSP, FPU-контекст задач (порт ARM_CM4F).
+- [x] **FreeRTOS** — `examples/freertos`, тесты `FreeRtosFirmwareTest.*`; эмулятор менять
+      не пришлось. Ядро: `git clone --depth 1 --branch V11.1.0
+      https://github.com/FreeRTOS/FreeRTOS-Kernel.git third_party/freertos`.
+- [ ] **Build & Load для HAL- и FreeRTOS-проектов в приложении.** `ArmGccBuilder` знает только
+      `device/stm32f407/include`, поэтому `examples/hal_blinky` и `examples/freertos`, открытые в
+      окне, не соберутся. Вариант: поставлять HAL (BSD-3) и FreeRTOS (MIT) рядом с `device/`
+      и добавлять их `-I`/исходники, если в папке проекта есть `stm32f4xx_hal_conf.h` /
+      `FreeRTOSConfig.h`.
 
 ## 2. Пробелы в эмуляции, заметные студенту
 - [ ] **TIM4 и ШИМ** на PD12–PD15 (классическое упражнение на Discovery: яркость светодиодов через
