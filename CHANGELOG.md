@@ -119,7 +119,7 @@ SPI, I2C, SysTick, EXTI и NVIC/SCB.
 `Machine::loadFirmwareBuffer()` (прошивка из памяти) и `Machine::nvic()`.
 
 ### Тесты (`tests/`, GoogleTest + CTest)
-Запуск: `scripts\test.bat`. 43 теста, около 7 секунд:
+Запуск: `scripts\test.bat`. Первые наборы тестов:
 
 | Файл | Что проверяет |
 |---|---|
@@ -192,7 +192,7 @@ BSRR, падают 3 теста (`ByteWriteToDrKeepsReceivedByte`, `ByteWriteToP
 - Панель инструментов: выбор скорости (Real time ×1 по умолчанию, ×0.1, ×0.5, ×2, ×10, Max) и
   индикатор измеренной скорости `speed ×1.00`.
 - Тесты `tests/test_pacer.cpp` (9 тестов): ожидание, смена частоты, коэффициенты, отсутствие
-  накопленной ошибки, прощение отставания, измерение, размер порции. Всего 58 тестов.
+  накопленной ошибки, прощение отставания, измерение, размер порции.
 
 Проверено в окне:
 
@@ -240,7 +240,7 @@ BSRR, падают 3 теста (`ByteWriteToDrKeepsReceivedByte`, `ByteWriteToP
 `tests/cortex_programs.inc`. Проверяется, что прерывание срабатывает **до следующей
 инструкции** после записи в ISPR, сразу после `cpsie i` и после снятия BASEPRI; PRIGROUP;
 SVC и его сохранённый PC; PendSV; двойной `NVIC_SystemReset` со счётчиком загрузок в SRAM;
-SysTick с периодом 101 такт; вложенные прерывания. Всего 71 тест.
+SysTick с периодом 101 такт; вложенные прерывания.
 
 ### Исправлено в сборке
 **Не отслеживались зависимости от заголовков.** MSVC с русским интерфейсом печатает
@@ -277,8 +277,6 @@ Ninja в UTF-8. Ninja не узнавала строки, и после изме
 - `CountersAreExactWithinChunk`: между двумя чтениями `VAL` и `CNT` через 10 NOP разница ровно 11;
 - `TimerEnabledMidChunkInterruptsOnTime`: TIM2 с `ARR = 20`, включённый посреди порции, вызывает
   прерывание через 21 такт, а не в конце порции (раньше ~120 итераций цикла вместо 10).
-
-Всего 73 теста.
 
 Файлы: `src/core/MmioBus.{h,cpp}`, `src/core/Machine.{h,cpp}`, `src/core/CpuEngine.h`,
 `tests/test_nvic.cpp`, `tests/test_firmware.cpp`, `tests/asm/*.s`, `tests/cortex_programs.inc`.
@@ -318,7 +316,7 @@ FP-инструкции в обработчике, оставался выста
   настоящая прошивка на C, `main()` суммирует float, SysTick каждые 157 тактов тоже считает во
   float. На старом коде сумма получалась неверной и загорался красный светодиод.
 
-Всего 77 тестов. Скорость не изменилась (132 / 147 / 110 млн инструкций в секунду).
+Скорость не изменилась (132 / 147 / 110 млн инструкций в секунду).
 В чек-лист добавлен раздел 6а, в README — пример `fpu_irq`. Заодно в README исправлены
 испорченные пути `scripts\test.bat` и `build\tests\...` (вместо `\t` стояла табуляция).
 
@@ -387,9 +385,8 @@ MSP/PSP/CONTROL/PRIMASK и читает их как 0, пока процессо
 - `FirmwareTest.FpuIrqKeepsFloatRegistersOfInterruptedCode` проверяет и то, что `SystemInit()`
   действительно включает FPU.
 
-Всего 81 тест. Скорость тогда была оценена как «в пределах шума», но это оказалось неверно:
-на самом деле эмуляция стала медленнее на ~8% (см. «Повторный прогон чек-листа» ниже, там же
-исправление). Проверено в окне: `fpu_irq` работает,
+Проверка CPACR замедлила эмуляцию на ~8%; это исправлено, см. «Повторный прогон ручного
+чек-листа» ниже. Проверено в окне: `fpu_irq` работает,
 `SCB_CPACR = 0x00F00000`, CONTROL = 4. В чек-лист (раздел 6а) добавлена проверка CPACR.
 
 Файлы: `src/core/CpuEngine.{h,cpp}`, `src/core/Nvic.{h,cpp}`, `src/core/Machine.{h,cpp}`,
@@ -447,17 +444,10 @@ MSP/PSP/CONTROL/PRIMASK и читает их как 0, пока процессо
   `fpu_irq` (прерывание каждые 157 тактов: худший случай для входа в исключения).
 - README: путь `scripts\build.bat` был испорчен (вместо `\b` стоял управляющий символ backspace).
 
-### Не воспроизвелось (скорее всего, артефакты автоматизации)
-- Один раз поле BP не получило фокус по клику; в пяти повторах с разной предысторией работало.
-- Build & Load, нажатый через 1,2 с после выбора папки в диалоге, собрал предыдущий проект:
-  сигнал принятия нативного диалога пришёл позже нажатия. С паузой 3 с всё верно; человек так
-  быстро не нажмёт, но если это всплывёт, стоит блокировать Build & Load, пока открыт диалог.
-
 ## Проверка на проекте STM32CubeF4 HAL
 
 Новый пример `examples/hal_blinky` — проект в стиле CubeMX на настоящем HAL от ST
-(`stm32f4xx_hal_driver`, `cmsis_device_f4`, `cmsis_core`; в репозиторий не входят, скачиваются
-в `third_party/stm32cube`, папка в `.gitignore`; позже HAL положен в репозиторий, см.
+(`stm32f4xx_hal_driver`, `cmsis_device_f4`, `cmsis_core`; лежат в `device/stm32f407/cube`, см.
 «Build & Load для HAL, FreeRTOS и CubeMX»): `HAL_Init()`, `SystemClock_Config()` на
 168 МГц через HSE + PLL, `HAL_Delay`, `HAL_GPIO_TogglePin`, `HAL_UART_Transmit`,
 `HAL_GPIO_EXTI_Callback`. Если любой вызов HAL вернёт ошибку, `Error_Handler` зажигает синий
@@ -475,7 +465,7 @@ MSP/PSP/CONTROL/PRIMASK и читает их как 0, пока процессо
 
 Тесты: `HalFirmwareTest.ClockConfigUartAndDelay` (строка `HAL ok, SYSCLK=168000000`, тики
 каждые 100 мс, мигание PD12, `Error_Handler` не вызван), `HalFirmwareTest.ButtonTogglesRedLedThroughExtiCallback`,
-`Bitband.PeripheralAndSramBits`. Если HAL не скачан, HAL-тесты пропускаются. Итого 84 теста.
+`Bitband.PeripheralAndSramBits`.
 
 Файлы: `src/core/MmioBus.{h,cpp}`, `src/core/Addresses.h`, `src/core/Machine.cpp`,
 `device/stm32f407/STM32F407VGTx_FLASH.ld`, `examples/hal_blinky/`, `tests/CMakeLists.txt`,
@@ -484,7 +474,7 @@ MSP/PSP/CONTROL/PRIMASK и читает их как 0, пока процессо
 ## Проверка на FreeRTOS
 
 Новый пример `examples/freertos` — FreeRTOS-Kernel V11.1.0, порт `GCC/ARM_CM4F`, `heap_4`
-(сначала клонировалось в `third_party/freertos`; теперь лежит в `device/stm32f407/freertos`).
+(лежит в `device/stm32f407/freertos`).
 Шесть задач: две вычислительные с одинаковым приоритетом делят процессор по тикам прямо внутри
 float-цикла (проверка FPU-контекста задач и lazy stacking на PSP), мигание через `vTaskDelay`,
 производитель и потребитель очереди (`vTaskDelayUntil` каждые 100 мс, вывод в UART), задача,
@@ -495,8 +485,7 @@ float-цикла (проверка FPU-контекста задач и lazy sta
 Всё заработало без изменений эмулятора. Вывод UART за 0,5 с модельного времени:
 `rx 1 a=17 b=17` … `rx 4 a=71 b=71` (a и b — раунды двух вычислительных задач, поровну).
 
-Тесты: `FreeRtosFirmwareTest.TasksQueueAndFpuContext`, `FreeRtosFirmwareTest.ButtonGivesSemaphoreFromIsr`
-(пропускаются, если ядро не скачано). Итого 86 тестов.
+Тесты: `FreeRtosFirmwareTest.TasksQueueAndFpuContext`, `FreeRtosFirmwareTest.ButtonGivesSemaphoreFromIsr`.
 
 ## TIM4/TIM5 и ШИМ: яркость светодиодов
 
@@ -516,7 +505,6 @@ float-цикла (проверка FPU-контекста задач и lazy sta
 
 Тесты: `FirmwareTest.Tim4PwmSetsLedBrightness`, `TimerFixture.PwmOutputLevel`,
 `TimerFixture.LongTickWrapsLikeSingleSteps`, `Timer.SixteenBitTimersMaskCounterRegisters`.
-Итого 90 тестов.
 
 ## Предупреждение об обращении к неэмулируемой периферии
 
@@ -531,7 +519,7 @@ Build log появляется, например,
 Реализация: `MmioBus::setUnmappedHook`, `Machine::setWarningSink` / `onUnmappedAccess`,
 сигнал `MachineWorker::warning`. Тесты: `MachineTest.WarnsOnceAboutUnemulatedPeripheral`;
 кроме того, `FirmwareTest::TearDown` проверяет, что ни один пример (включая HAL и FreeRTOS)
-не трогает неэмулируемую периферию. Итого 91 тест.
+не трогает неэмулируемую периферию.
 
 ## Build & Load для HAL, FreeRTOS и CubeMX
 
@@ -596,14 +584,11 @@ SCB, SysTick. Теперь, как на МК, обращение к Private Peri
 Базовые таймеры (прерывания `TIM6_DAC_IRQn`, `TIM7_IRQn`). CubeMX в проектах с FreeRTOS
 использует один из них как time base HAL вместо SysTick; без них `HAL_Delay` зависал.
 
-## Документация к сдаче
+## Документация
 
-- `README.md` переписан под итоговую версию: где смотреть изменения относительно `bf0b419`,
-  быстрый старт (Open project → Build & Load → Run), таблица «какой exe запускать для какого
-  теста» и групп `--gtest_filter`, таблица примеров с ожидаемым результатом, структура папок.
-- `docs/TODO.md`: 103 теста вместо 102, убран устаревший пункт «WFI выполняется как NOP»
-  (остался только WFE).
-- `docs/MANUAL_TESTING.md`: проверка статуса `Running (WFI sleep)` на `tim4_pwm` и кнопки Expand.
+`README.md` описывает итоговую версию: где смотреть изменения относительно `bf0b419`,
+быстрый старт (Open project → Build & Load → Run), какой exe запускать для какого теста и
+группы `--gtest_filter`, примеры с ожидаемым результатом, структуру папок.
 
 ## Проверка сборки на чистом клоне
 
@@ -615,10 +600,6 @@ SCB, SysTick. Теперь, как на МК, обращение к Private Peri
 `tests/test_builder.cpp` читает файлы в текстовом режиме (CRLF → `\n`). После этого 103 из 103
 и в клоне, и в рабочей папке.
 
-## Известные ограничения (кандидаты на доработку)
-
-Список — в [docs/TODO.md](docs/TODO.md), раздел «Можно сделать дальше».
-
 ## Исправления интерфейса (найдены при проверке окна)
 
 - **Дизассемблер не показывал инструкции — никогда.** В `DisasmPanel.qml` было `text: text`:
@@ -629,7 +610,7 @@ SCB, SysTick. Теперь, как на МК, обращение к Private Peri
   возвращал ошибку, и весь буфер заполнялся нулями. Теперь `CpuEngine::readMem` дочитывает
   диапазон по страницам (немапленное — нули), а окно не заходит ниже начала flash.
 - При запуске справа внизу было «no firmware», хотя встроенная прошивка уже загружена.
-- Тест дизассемблера: `tests/test_disasm.cpp` (45 тестов в сумме).
+- Тест дизассемблера: `tests/test_disasm.cpp`.
 - **Редактор нельзя было развернуть.** Панель Source зажата между платой, дизассемблером и
   консолью, длинный код не помещался. Теперь кнопка **Expand** в панели Source (или **F11**)
   отдаёт редактору всё окно, панель инструментов (Run, Build & Load) остаётся; **Restore** или
@@ -638,5 +619,6 @@ SCB, SysTick. Теперь, как на МК, обращение к Private Peri
 - `scripts/ui.ps1` — скриншоты окна и клики мышью из PowerShell, чтобы проверять интерфейс
   без человека (так и были найдены эти баги).
 
-Примечание: кнопка **Builtin LED** только загружает прошивку, запускает её **Run** —
-индикатор STOPPED после загрузки — это нормально.
+## Известные ограничения
+
+Список — в [docs/TODO.md](docs/TODO.md), раздел «Можно сделать дальше».

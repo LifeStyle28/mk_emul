@@ -15,8 +15,6 @@ CMSIS и FreeRTOS лежат в `device/stm32f407`), TIM4 с ШИМ, TIM5–TIM7
   `device/stm32f407/THIRD_PARTY.md`.
 - **Startup проекта CubeMX заменяется** на startup эмулятора (он такой же для F407 и точно
   совпадает с линкер-скриптом эмулятора), линкер-скрипт тоже всегда свой.
-- **Сдача**: ветка `my-version` целиком (история коммитов по шагам + CHANGELOG). Pull request
-  в `main` своего форка по желанию: `gh pr create --base main --head my-version`.
 
 ## Можно сделать дальше (не обязательно)
 - TIM1/TIM8 (продвинутые таймеры: BDTR.MOE, APB2), TIM9–TIM14; флаги CCxIF и прерывания по
