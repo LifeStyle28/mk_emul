@@ -605,6 +605,16 @@ SCB, SysTick. Теперь, как на МК, обращение к Private Peri
   (остался только WFE).
 - `docs/MANUAL_TESTING.md`: проверка статуса `Running (WFI sleep)` на `tim4_pwm` и кнопки Expand.
 
+## Проверка сборки на чистом клоне
+
+Ветка склонирована в пустую папку и собрана по README: `fetch_toolchain.ps1` (3 мин),
+`scripts\build.bat` (70 с, в нашем коде предупреждений нет), `scripts\test.bat`.
+Нашлась ошибка, которой не было видно в рабочей папке: `BuilderTest.HalTimebaseOnTim6`
+падал. Git для Windows при клонировании (`core.autocrlf=true`) ставит окончания строк CRLF,
+а тест правил `examples/hal_blinky/main.c` поиском текста с `\n`. Теперь `readText` в
+`tests/test_builder.cpp` читает файлы в текстовом режиме (CRLF → `\n`). После этого 103 из 103
+и в клоне, и в рабочей папке.
+
 ## Известные ограничения (кандидаты на доработку)
 
 Список — в [docs/TODO.md](docs/TODO.md), раздел «Можно сделать дальше».

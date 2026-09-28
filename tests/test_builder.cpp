@@ -22,7 +22,8 @@ const QString kDevice = kSource + "/device/stm32f407";
 
 QString readText(const QString &path) {
     QFile f(path);
-    f.open(QIODevice::ReadOnly);
+    // Text mode: a Windows checkout (core.autocrlf) has CRLF, the tests edit sources by "\n".
+    f.open(QIODevice::ReadOnly | QIODevice::Text);
     return QString::fromUtf8(f.readAll());
 }
 
