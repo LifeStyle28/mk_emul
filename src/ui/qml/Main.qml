@@ -12,6 +12,9 @@ ApplicationWindow {
     color: Theme.bg
     font.family: Theme.uiFont
 
+    // Editor takes the whole window (F11 or the button in the Source panel); the toolbar stays.
+    property bool editorMaximized: false
+
     palette {
         window: Theme.bg
         windowText: Theme.text
@@ -62,6 +65,7 @@ ApplicationWindow {
         handle: splitHandle
 
         SplitView {
+            visible: !root.editorMaximized
             SplitView.preferredWidth: 340
             SplitView.minimumWidth: 280
             orientation: Qt.Vertical
@@ -81,12 +85,19 @@ ApplicationWindow {
                 handle: splitHandle
                 EditorPanel {
                     SplitView.fillWidth: true
+                    maximized: root.editorMaximized
                     onRequestOpenFolder: folderDialog.open()
+                    onToggleMaximized: root.editorMaximized = !root.editorMaximized
                 }
-                DisasmPanel { SplitView.preferredWidth: 380; SplitView.minimumWidth: 260 }
+                DisasmPanel {
+                    visible: !root.editorMaximized
+                    SplitView.preferredWidth: 380
+                    SplitView.minimumWidth: 260
+                }
             }
 
             SplitView {
+                visible: !root.editorMaximized
                 SplitView.preferredHeight: 230
                 SplitView.minimumHeight: 160
                 orientation: Qt.Horizontal
@@ -97,6 +108,7 @@ ApplicationWindow {
         }
 
         SplitView {
+            visible: !root.editorMaximized
             SplitView.preferredWidth: 320
             SplitView.minimumWidth: 260
             orientation: Qt.Vertical
@@ -104,6 +116,12 @@ ApplicationWindow {
             MemoryPanel { SplitView.preferredHeight: 300 }
             PeriphPanel { SplitView.fillHeight: true }
         }
+    }
+
+    Shortcut {
+        sequence: "F11"
+        context: Qt.ApplicationShortcut
+        onActivated: root.editorMaximized = !root.editorMaximized
     }
 
     footer: Rectangle {
