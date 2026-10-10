@@ -2,13 +2,15 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
+// Run / debug / build actions. Opening projects and firmware lives in the File menu (one place
+// and one name for each action); the buttons here call the same functions as the menu.
 ToolBar {
     id: bar
-    signal openFirmware()
-    signal openProject()
+    signal openClock()
     // A file/folder dialog is open: Build & Load waits, otherwise it could build the previous
     // project before the dialog's choice arrives.
     property bool dialogOpen: false
+    readonly property bool canStep: !emulator.running && (!debugSession.active || debugSession.state === "stopped")
     padding: 8
     background: Rectangle {
         color: Theme.header
@@ -20,9 +22,24 @@ ToolBar {
         }
     }
 
+    component Separator: Rectangle {
+        width: 1
+        height: 18
+        color: Theme.border
+        Layout.leftMargin: 4
+        Layout.rightMargin: 4
+    }
+
+    component TipButton: AppButton {
+        property string tip: ""
+        ToolTip.visible: hovered && tip.length > 0
+        ToolTip.delay: 500
+        ToolTip.text: tip
+    }
+
     RowLayout {
         anchors.fill: parent
-        spacing: 8
+        spacing: 6
 
         Label {
             text: "mk_emul"
@@ -38,20 +55,44 @@ ToolBar {
             font.family: Theme.monoFont
         }
 
-        Rectangle { width: 1; height: 18; color: Theme.border; Layout.leftMargin: 6; Layout.rightMargin: 6 }
+        Separator { Layout.leftMargin: 6 }
 
-        AppButton { text: "Reset"; onClicked: emulator.reset() }
-        AppButton {
+        TipButton { text: "Reset"; tip: "Reset the MCU (Ctrl+Shift+F5)"; onClicked: emulator.reset() }
+        TipButton {
             text: emulator.running ? "Pause" : "Run"
             primary: !emulator.running
+            tip: emulator.running ? "Pause (Shift+F5)" : "Run / Continue (F5)"
             onClicked: emulator.running ? emulator.pause() : emulator.run()
         }
-        AppButton { text: "Step"; onClicked: emulator.step() }
+        TipButton {
+            text: "Step Over"
+            enabled: bar.canStep
+            tip: "Next source line, calls run through (F10)"
+            onClicked: emulator.stepOver()
+        }
+        TipButton {
+            text: "Step Into"
+            enabled: bar.canStep
+            tip: "Next source line, enters called functions (F11)"
+            onClicked: emulator.stepInto()
+        }
+        TipButton {
+            text: "Step Out"
+            enabled: bar.canStep && debugSession.active
+            tip: "Run until the current function returns (Shift+F11)"
+            onClicked: emulator.stepOut()
+        }
+        TipButton {
+            text: "Step Instr"
+            enabled: bar.canStep
+            tip: "One machine instruction (Ctrl+F10)"
+            onClicked: emulator.step()
+        }
 
         ComboBox {
             id: speedBox
             implicitHeight: 30
-            Layout.preferredWidth: 132
+            Layout.preferredWidth: 126
             font.pixelSize: 12
             textRole: "text"
             valueRole: "value"
@@ -69,38 +110,33 @@ ToolBar {
             ToolTip.text: "Emulation speed. Real time: 1 emulated second = 1 second (SysTick delays, blinking)."
         }
 
-        Rectangle { width: 1; height: 18; color: Theme.border; Layout.leftMargin: 4; Layout.rightMargin: 4 }
+        Separator {}
 
-        AppButton { text: "Builtin LED"; onClicked: emulator.loadBuiltin() }
-        AppButton { text: "Open FW…"; onClicked: bar.openFirmware() }
-        AppButton { text: "Open project…"; onClicked: bar.openProject() }
-        AppButton {
+        TipButton {
             text: emulator.building ? "Building…" : "Build & Load"
             primary: true
             enabled: !emulator.building && !bar.dialogOpen
+            tip: "Compile the project with " + emulator.optimization + ", load it and start the debugger (Ctrl+B)"
             onClicked: emulator.compileAndLoad()
         }
-
-        Rectangle { width: 1; height: 18; color: Theme.border; Layout.leftMargin: 4; Layout.rightMargin: 4 }
-
-        Label { text: "BP"; color: Theme.muted; font.pixelSize: 11 }
-        TextField {
-            Layout.preferredWidth: 118
+        ComboBox {
+            id: optBox
             implicitHeight: 30
-            text: emulator.breakpointText
-            font.family: Theme.monoFont
+            Layout.preferredWidth: 78
             font.pixelSize: 12
-            color: Theme.text
-            leftPadding: 8
-            background: Rectangle {
-                radius: 6
-                color: Theme.panelAlt
-                border.color: parent.activeFocus ? Theme.accent : Theme.border
-            }
-            onEditingFinished: emulator.breakpointText = text
+            font.family: Theme.monoFont
+            model: emulator.optimizationLevels
+            currentIndex: emulator.optimizationLevels.indexOf(emulator.optimization)
+            onActivated: emulator.optimization = currentText
+            ToolTip.visible: hovered
+            ToolTip.delay: 500
+            ToolTip.text: "Optimization level for Build & Load (Build → Optimization)"
         }
-        AppButton { text: "Add"; onClicked: emulator.addBreakpoint() }
-        AppButton { text: "Del"; danger: true; onClicked: emulator.removeBreakpoint() }
+        TipButton {
+            text: "Clock…"
+            tip: "Clock configuration: PLL, AHB / APB prescalers, code for SystemClock_Config()"
+            onClicked: bar.openClock()
+        }
 
         Item { Layout.fillWidth: true }
 

@@ -7,9 +7,11 @@
 #include <QFileSystemWatcher>
 #include <QProcess>
 #include <QSet>
+#include <QSettings>
 #include <QTimer>
 #include <QUrl>
 
+#include <algorithm>
 #include <cmath>
 
 RegisterModel::RegisterModel(QObject *parent)
@@ -309,16 +311,119 @@ QVector<QPair<QString, QString>> ProjectModel::files() const {
 }
 
 void ProjectModel::loadDefaultProject(const QString &examplesDir) {
+    examplesDir_ = QDir(examplesDir).absolutePath();
+    QSettings settings;
+    recent_ = settings.value("project/recent").toStringList();
+    recent_.erase(std::remove_if(recent_.begin(), recent_.end(), [](const QString &p) { return !QDir(p).exists(); }),
+                  recent_.end());
+    emit recentProjectsChanged();
+    const QString last = settings.value("project/last").toString();
+    if (!last.isEmpty() && QDir(last).exists()) {
+        loadFromDirectory(last);
+        return;
+    }
     const QString root = QDir(examplesDir + "/blinky").absolutePath();
     if (QDir(root).exists())
         loadFromDirectory(root);
 }
 
+QString ProjectModel::projectName() const {
+    return projectPath_.isEmpty() ? QString() : QFileInfo(projectPath_).fileName();
+}
+
+QStringList ProjectModel::examples() const {
+    if (examplesDir_.isEmpty())
+        return {};
+    return QDir(examplesDir_).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+}
+
 void ProjectModel::openFolder(const QUrl &url) {
-    const QString root = QDir(url.toLocalFile()).absolutePath();
-    if (root.isEmpty() || !QDir(root).exists())
+    openPath(url.toLocalFile());
+}
+
+void ProjectModel::openPath(const QString &path) {
+    const QString root = QDir(path).absolutePath();
+    if (path.isEmpty() || !QDir(root).exists())
         return;
+    saveAll();
     loadFromDirectory(root);
+    // Recent list and the project for the next start (examples too: they are projects).
+    QSettings settings;
+    recent_.removeAll(root);
+    recent_.prepend(root);
+    while (recent_.size() > 8)
+        recent_.removeLast();
+    settings.setValue("project/recent", recent_);
+    settings.setValue("project/last", root);
+    emit recentProjectsChanged();
+}
+
+void ProjectModel::openExample(const QString &name) {
+    if (!examplesDir_.isEmpty() && !name.isEmpty())
+        openPath(examplesDir_ + "/" + name);
+}
+
+void ProjectModel::clearRecentProjects() {
+    recent_.clear();
+    QSettings().setValue("project/recent", recent_);
+    emit recentProjectsChanged();
+}
+
+bool ProjectModel::newProject(const QUrl &folder) {
+    const QString root = QDir(folder.toLocalFile()).absolutePath();
+    if (folder.isEmpty() || !QDir().mkpath(root))
+        return false;
+    const QString main = root + "/main.c";
+    if (!QFile::exists(main)) {
+        QFile f(main);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text))
+            return false;
+        f.write("// New mk_emul project: STM32F407 (Discovery board), register level.\n"
+                "// Build & Load (Ctrl+B), then Run (F5). LEDs: PD12 green .. PD15 blue.\n"
+                "#include \"stm32f407xx.h\"\n"
+                "\n"
+                "static void delay(volatile uint32_t n) {\n"
+                "    while (n--) {\n"
+                "    }\n"
+                "}\n"
+                "\n"
+                "int main(void) {\n"
+                "    RCC->AHB1ENR |= RCC_AHB1ENR_GPIODEN;\n"
+                "    GPIOD->MODER = (GPIOD->MODER & ~(0xFFu << 24)) | (0x55u << 24); // PD12-15 outputs\n"
+                "    for (;;) {\n"
+                "        GPIOD->ODR ^= 1u << 12;\n"
+                "        delay(200000);\n"
+                "    }\n"
+                "}\n");
+    }
+    openPath(root);
+    return true;
+}
+
+void ProjectModel::setFileContent(int index, const QString &text) {
+    if (index < 0 || index >= files_.size() || files_[index].content == text)
+        return;
+    files_[index].content = text;
+    files_[index].dirty = true;
+    emit dataChanged(this->index(index), this->index(index));
+    if (index == current_)
+        emit currentContentChanged();
+    saveAll();
+}
+
+bool ProjectModel::writeFile(const QString &relativeName, const QString &text) {
+    if (!addFile(relativeName)) // opens it (creating an empty file) and makes it current
+        return false;
+    setFileContent(current_, text);
+    return true;
+}
+
+int ProjectModel::indexOfName(const QString &relativeName) const {
+    for (int i = 0; i < files_.size(); ++i) {
+        if (files_[i].name.compare(relativeName, Qt::CaseInsensitive) == 0)
+            return i;
+    }
+    return -1;
 }
 
 void ProjectModel::collectFiles(const QString &dir, const QString &root, QStringList *out) const {

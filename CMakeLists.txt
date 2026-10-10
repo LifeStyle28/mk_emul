@@ -11,7 +11,7 @@ if(NOT DEFINED CMAKE_PREFIX_PATH AND EXISTS "C:/Qt/6.3.2/msvc2019_64")
     set(CMAKE_PREFIX_PATH "C:/Qt/6.3.2/msvc2019_64")
 endif()
 
-find_package(Qt6 6.2 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2)
+find_package(Qt6 6.2 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2)
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
@@ -50,6 +50,8 @@ add_library(mk_emul_core STATIC
     src/core/Machine.cpp
     src/core/Disassembler.cpp
     src/core/RealTimePacer.cpp
+    src/core/GdbStub.cpp
+    src/core/ClockConfig.cpp
     src/periph/Rcc.cpp
     src/periph/Gpio.cpp
     src/periph/Usart.cpp
@@ -69,11 +71,24 @@ if(MSVC)
     target_compile_definitions(mk_emul_core PUBLIC NOMINMAX)
 endif()
 
+# Debugger: GDB server transport for the machine and the gdb (MI) client behind the UI.
+add_library(mk_emul_debug STATIC
+    src/debug/GdbMi.cpp
+    src/debug/GdbServer.cpp
+    src/debug/DebugSession.cpp
+)
+set_target_properties(mk_emul_debug PROPERTIES AUTOMOC ON)
+target_link_libraries(mk_emul_debug PUBLIC mk_emul_core Qt6::Core Qt6::Network)
+if(MSVC)
+    target_compile_options(mk_emul_debug PRIVATE /W3 /utf-8 /Zc:__cplusplus)
+endif()
+
 qt_add_executable(mk_emul
     src/app/main.cpp
     src/ui/bridge/Models.cpp
     src/ui/bridge/EmulatorController.cpp
     src/ui/bridge/CHighlighter.cpp
+    src/ui/bridge/ClockModel.cpp
     src/toolchain/ArmGccBuilder.cpp
 )
 
@@ -90,7 +105,11 @@ set_source_files_properties(
 set_source_files_properties(
     src/ui/qml/DisasmPanel.qml PROPERTIES QT_RESOURCE_ALIAS DisasmPanel.qml)
 set_source_files_properties(
-    src/ui/qml/PeriphPanel.qml PROPERTIES QT_RESOURCE_ALIAS PeriphPanel.qml)
+    src/ui/qml/DebugPanel.qml PROPERTIES QT_RESOURCE_ALIAS DebugPanel.qml)
+set_source_files_properties(
+    src/ui/qml/VariableList.qml PROPERTIES QT_RESOURCE_ALIAS VariableList.qml)
+set_source_files_properties(
+    src/ui/qml/ClockDialog.qml PROPERTIES QT_RESOURCE_ALIAS ClockDialog.qml)
 set_source_files_properties(
     src/ui/qml/UartPanel.qml PROPERTIES QT_RESOURCE_ALIAS UartPanel.qml)
 set_source_files_properties(
@@ -119,7 +138,9 @@ qt_add_qml_module(mk_emul
         src/ui/qml/RegisterPanel.qml
         src/ui/qml/MemoryPanel.qml
         src/ui/qml/DisasmPanel.qml
-        src/ui/qml/PeriphPanel.qml
+        src/ui/qml/DebugPanel.qml
+        src/ui/qml/VariableList.qml
+        src/ui/qml/ClockDialog.qml
         src/ui/qml/UartPanel.qml
         src/ui/qml/BuildPanel.qml
         src/ui/qml/EditorPanel.qml
@@ -130,8 +151,8 @@ qt_add_qml_module(mk_emul
 )
 
 target_link_libraries(mk_emul PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2
-    mk_emul_core
+    Qt6::Core Qt6::Gui Qt6::Network Qt6::Qml Qt6::Quick Qt6::QuickControls2
+    mk_emul_core mk_emul_debug
 )
 
 if(MSVC)

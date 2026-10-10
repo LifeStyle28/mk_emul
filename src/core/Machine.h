@@ -37,6 +37,13 @@ struct MachineSnapshot {
     uint32_t rccCfgr = 0;
     uint32_t rccAhb1enr = 0;
     uint32_t sysclk = 16000000;
+    uint32_t hclk = 16000000;
+    uint32_t pclk1 = 16000000;
+    uint32_t pclk2 = 16000000;
+    uint32_t timclk1 = 16000000;
+    uint32_t timclk2 = 16000000;
+    uint32_t rccPllcfgr = 0;
+    uint32_t flashAcr = 0;
     uint32_t systickCtrl = 0;
     uint32_t systickVal = 0;
     uint32_t systickLoad = 0;
@@ -81,6 +88,8 @@ public:
 
     MachineSnapshot snapshot() const;
     void readMemory(uint32_t addr, uint8_t *out, size_t len) const;
+    // Debugger write (gdb "set var", memory edits). Writes to flash drop translated code.
+    void writeMemory(uint32_t addr, const uint8_t *data, size_t len);
     CpuEngine &cpu() { return cpu_; }
     const CpuEngine &cpu() const { return cpu_; }
     Rcc &rcc() { return rcc_; }

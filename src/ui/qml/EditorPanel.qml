@@ -7,8 +7,28 @@ PanelCard {
     title: "Source"
     badge: (projectModel.dirty ? "● " : "") + (projectModel.currentName.length ? projectModel.currentName : "no file")
     property bool maximized: false
-    signal requestOpenFolder()
     signal toggleMaximized()
+
+    // F9: breakpoint on the line of the text cursor.
+    function toggleBreakpointAtCursor() {
+        debugSession.toggleBreakpoint(projectModel.currentName, code.cursorLine())
+    }
+
+    function openGoToLine() {
+        goToLine.open()
+        lineInput.text = ""
+        lineInput.forceActiveFocus()
+    }
+
+    // The debugger stopped: show its file and line.
+    function showLocation() {
+        if (!debugSession.currentFile.length || debugSession.currentLine <= 0)
+            return
+        const i = projectModel.indexOfName(debugSession.currentFile)
+        if (i >= 0)
+            projectModel.currentIndex = i
+        Qt.callLater(function() { code.ensureVisible(debugSession.currentLine) })
+    }
 
     function addFromField() {
         const n = newName.text.trim().length ? newName.text : "new.c"
@@ -44,7 +64,6 @@ PanelCard {
                 anchors.leftMargin: 8
                 anchors.rightMargin: 8
                 spacing: 6
-                AppButton { text: "Open folder…"; onClicked: root.requestOpenFolder() }
                 TextField {
                     id: newName
                     Layout.preferredWidth: 140
@@ -77,8 +96,8 @@ PanelCard {
                     text: root.maximized ? "Restore" : "Expand"
                     ToolTip.visible: hovered
                     ToolTip.delay: 500
-                    ToolTip.text: root.maximized ? "Show all panels again (F11)"
-                                                 : "Editor over the whole window (F11)"
+                    ToolTip.text: root.maximized ? "Show all panels again (Ctrl+M)"
+                                                 : "Editor over the whole window (Ctrl+M)"
                     onClicked: root.toggleMaximized()
                 }
             }
@@ -226,6 +245,12 @@ PanelCard {
             CodeEditor {
                 id: code
                 SplitView.fillWidth: true
+                breakpoints: {
+                    debugSession.breakpointsVersion // re-read when breakpoints change
+                    return debugSession.breakpointLines(projectModel.currentName)
+                }
+                currentLine: debugSession.currentFile === projectModel.currentName ? debugSession.currentLine : -1
+                onGutterClicked: function(line) { debugSession.toggleBreakpoint(projectModel.currentName, line) }
                 onEdited: {
                     if (text !== projectModel.currentContent)
                         projectModel.currentContent = text
@@ -278,6 +303,38 @@ PanelCard {
         }
     }
 
+    Popup {
+        id: goToLine
+        parent: code
+        x: 60
+        y: 8
+        width: 200
+        padding: 8
+        modal: false
+        focus: true
+        background: Rectangle { color: Theme.panel; border.color: Theme.accent; radius: 6 }
+        RowLayout {
+            anchors.fill: parent
+            spacing: 6
+            Label { text: "Go to line"; color: Theme.muted; font.pixelSize: 11 }
+            TextField {
+                id: lineInput
+                Layout.fillWidth: true
+                implicitHeight: 26
+                font.family: Theme.monoFont
+                font.pixelSize: 12
+                color: Theme.text
+                validator: IntValidator { bottom: 1 }
+                background: Rectangle { color: Theme.panelAlt; radius: 4; border.color: Theme.border }
+                onAccepted: {
+                    goToLine.close()
+                    code.goToLine(parseInt(text))
+                }
+                Keys.onEscapePressed: goToLine.close()
+            }
+        }
+    }
+
     Dialog {
         id: deleteDialog
         property int targetIndex: -1
@@ -312,6 +369,11 @@ PanelCard {
         sequence: "F2"
         enabled: fileList.activeFocus || fileList.renamingIndex >= 0
         onActivated: root.startRename(projectModel.currentIndex)
+    }
+
+    Connections {
+        target: debugSession
+        function onLocationChanged() { root.showLocation() }
     }
 
     Connections {

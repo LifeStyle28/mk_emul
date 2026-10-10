@@ -3,7 +3,9 @@
 #include "core/Disassembler.h"
 #include "core/Machine.h"
 #include "core/RealTimePacer.h"
+#include "debug/DebugSession.h"
 #include "toolchain/ArmGccBuilder.h"
+#include "ui/bridge/ClockModel.h"
 #include "ui/bridge/Models.h"
 
 #include <QElapsedTimer>
@@ -15,6 +17,7 @@
 #include <QUrl>
 
 class QQuickTextDocument;
+class GdbServer;
 
 class MachineWorker : public QObject {
     Q_OBJECT
@@ -31,8 +34,7 @@ public slots:
     void loadBuiltin();
     void setButton(bool pressed);
     void uartIn(const QString &text);
-    void addBreakpoint(quint32 addr);
-    void removeBreakpoint(quint32 addr);
+    void setBreakpoints(const QList<quint32> &addrs); // address breakpoints without a gdb session
     void setAnalog(int value);
     void requestMemory(quint32 addr);
     void requestDisasm();
@@ -49,15 +51,13 @@ signals:
     void speedMeasured(double speed); // emulated/real time ratio
     void warning(const QString &text);
     void consoleCleared();
+    void gdbServerReady(quint16 port);
+    void targetReset(); // reset done: a debugger must re-read the target
 
 private:
     void emitSnap(bool force);
     void clearConsole();
-    void setRunning(bool running) {
-        running_ = running;
-        ++runGen_;
-        emit runStateChanged(running);
-    }
+    void setRunning(bool running, int gdbSignal = 5);
     void scheduleTick(uint64_t waitNs);
 
     Machine machine_;
@@ -69,6 +69,8 @@ private:
     double lastSpeed_ = -1.0;
     qint64 lastSnapMs_ = 0;
     QByteArray uartBuf_;
+    GdbServer *gdb_ = nullptr;
+    QTimer *gdbSnapTimer_ = nullptr; // snapshot after a burst of gdb steps / writes
 };
 
 class EmulatorController : public QObject {
@@ -79,11 +81,13 @@ class EmulatorController : public QObject {
     Q_PROPERTY(QString buildLog READ buildLog NOTIFY buildLogChanged)
     Q_PROPERTY(bool building READ building NOTIFY buildingChanged)
     Q_PROPERTY(QString pcText READ pcText NOTIFY statusChanged)
-    Q_PROPERTY(QString breakpointText READ breakpointText WRITE setBreakpointText NOTIFY breakpointTextChanged)
     Q_PROPERTY(QString memoryAddressText READ memoryAddressText WRITE setMemoryAddressText NOTIFY memoryAddressTextChanged)
     Q_PROPERTY(QString firmwarePath READ firmwarePath NOTIFY firmwarePathChanged)
     Q_PROPERTY(double speed READ speed WRITE setSpeed NOTIFY speedChanged)
     Q_PROPERTY(QString measuredSpeedText READ measuredSpeedText NOTIFY speedChanged)
+    Q_PROPERTY(QString optimization READ optimization WRITE setOptimization NOTIFY optimizationChanged)
+    Q_PROPERTY(QStringList optimizationLevels READ optimizationLevels CONSTANT)
+    Q_PROPERTY(bool debuggerAvailable READ debuggerAvailable NOTIFY debuggerAvailableChanged)
 public:
     explicit EmulatorController(QObject *parent = nullptr);
     ~EmulatorController() override;
@@ -94,8 +98,6 @@ public:
     QString buildLog() const { return buildLog_; }
     bool building() const { return building_; }
     QString pcText() const { return pcText_; }
-    QString breakpointText() const { return breakpointText_; }
-    void setBreakpointText(const QString &t);
     QString memoryAddressText() const { return memoryAddressText_; }
     void setMemoryAddressText(const QString &t);
     QString firmwarePath() const { return firmwarePath_; }
@@ -103,6 +105,12 @@ public:
     double speed() const { return speed_; }
     void setSpeed(double speed);
     QString measuredSpeedText() const;
+    // Build & Load optimization level (-O0 ... -Os), kept in the settings.
+    QString optimization() const { return optimization_; }
+    void setOptimization(const QString &level);
+    QStringList optimizationLevels() const { return ArmGccBuilder::optimizationLevels(); }
+    bool debuggerAvailable() const { return !gdbPath().isEmpty(); }
+    void setDebugEnabled(bool on) { debugEnabled_ = on; } // off in --headless mode
 
     RegisterModel *registerModel() { return &registers_; }
     MemoryModel *memoryModel() { return &memory_; }
@@ -111,15 +119,18 @@ public:
     BoardModel *boardModel() { return &board_; }
     UartModel *uartModel() { return &uart_; }
     ProjectModel *projectModel() { return &project_; }
+    DebugSession *debugger() { return &debug_; }
+    ClockModel *clockModel() { return &clock_; }
 
     Q_INVOKABLE void reset();
     Q_INVOKABLE void run();
     Q_INVOKABLE void pause();
-    Q_INVOKABLE void step();
+    Q_INVOKABLE void step(); // one instruction
+    Q_INVOKABLE void stepOver();
+    Q_INVOKABLE void stepInto();
+    Q_INVOKABLE void stepOut();
     Q_INVOKABLE void loadFirmware(const QUrl &url);
     Q_INVOKABLE void loadBuiltin();
-    Q_INVOKABLE void addBreakpoint();
-    Q_INVOKABLE void removeBreakpoint();
     Q_INVOKABLE void compileAndLoad();
     Q_INVOKABLE void attachHighlighter(QQuickTextDocument *doc);
     Q_INVOKABLE void goMemory();
@@ -129,7 +140,8 @@ signals:
     void statusChanged();
     void buildLogChanged();
     void buildingChanged();
-    void breakpointTextChanged();
+    void optimizationChanged();
+    void debuggerAvailableChanged();
     void memoryAddressTextChanged();
     void firmwarePathChanged();
     void speedChanged();
@@ -138,6 +150,10 @@ private:
     void applySnapshot(const MachineSnapshot &snap, const QByteArray &uart);
     // Parses "0x..." / decimal; on error shows a status message and returns false.
     bool addressFromText(const QString &text, quint32 *out);
+    QString gdbPath() const;
+    // Loads a firmware file; an ELF gets a debug session (sourceRoot: where the project was
+    // compiled from, "" for a file opened from disk).
+    void loadAndDebug(const QString &path, const QString &sourceRoot);
 
     QThread workerThread_;
     MachineWorker *worker_ = nullptr;
@@ -149,6 +165,11 @@ private:
     UartModel uart_;
     ProjectModel project_;
     ArmGccBuilder builder_;
+    DebugSession debug_;
+    ClockModel clock_{&project_};
+    quint16 gdbPort_ = 0;
+    bool debugEnabled_ = true;
+    QString optimization_ = QStringLiteral("-O0");
     bool running_ = false;
     bool building_ = false;
     QPointer<QThread> buildThread_; // a running build is waited for on exit
@@ -157,7 +178,6 @@ private:
     QString status_ = QStringLiteral("Starting…");
     QString buildLog_;
     QString pcText_ = QStringLiteral("0x00000000");
-    QString breakpointText_ = QStringLiteral("0x08000008");
     QString memoryAddressText_ = QStringLiteral("0x20000000");
     QString firmwarePath_ = QStringLiteral("(builtin blinky)"); // Machine::initialize loads it
     QString dataRoot_;

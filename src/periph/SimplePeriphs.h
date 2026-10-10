@@ -168,6 +168,7 @@ public:
     void reset() override;
 
     void setReadValue(uint32_t offset, uint32_t value);
+    uint32_t value(uint32_t offset) const { return mem_[(offset / 4) % 64]; }
 
 private:
     const char *name_;

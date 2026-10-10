@@ -94,6 +94,46 @@ TEST_F(MachineTest, BreakpointStopsBeforeTheInstruction) {
     EXPECT_EQ(m.runQuantum(100), CpuEngine::StopReason::Quantum);
 }
 
+// Regression: a run resumed on the PC where the previous chunk ended skipped a breakpoint
+// there, so a breakpoint on a chunk boundary was missed.
+TEST_F(MachineTest, BreakpointAtChunkBoundaryIsNotSkipped) {
+    loadImage(m, loopImage());
+    m.addBreakpoint(F + 0x42);
+    EXPECT_EQ(m.runQuantum(1), CpuEngine::StopReason::Quantum);
+    EXPECT_EQ(m.cpu().pc(), F + 0x42) << "the chunk ended right before the breakpoint";
+    EXPECT_EQ(m.runQuantum(100), CpuEngine::StopReason::Breakpoint);
+    EXPECT_EQ(m.cpu().instructionCount(), 1u) << "stopped at once, the breakpoint instruction did not run";
+
+    // Step always executes the instruction under PC, breakpoint or not.
+    m.step();
+    EXPECT_EQ(m.cpu().pc(), F + 0x40);
+}
+
+// GDB range stepping (vCont;r): stop before the first instruction outside the range.
+TEST_F(MachineTest, StepRangeStopsWhenPcLeavesTheRange) {
+    loadImage(m, loopImage());
+    m.cpu().setStepRange(F + 0x40, F + 0x44); // the whole loop: never leaves
+    m.cpu().resumeHere();
+    EXPECT_EQ(m.runQuantum(100), CpuEngine::StopReason::Quantum);
+    EXPECT_EQ(m.cpu().instructionCount(), 100u);
+
+    m.reset();
+    m.cpu().setStepRange(F + 0x40, F + 0x42); // only "adds"
+    m.cpu().resumeHere();
+    EXPECT_EQ(m.runQuantum(100), CpuEngine::StopReason::StepDone);
+    EXPECT_EQ(m.cpu().pc(), F + 0x42);
+    EXPECT_EQ(m.cpu().instructionCount(), 1u);
+
+    // The first instruction always runs, even outside the range ("step once, then while in").
+    m.cpu().setStepRange(F + 0x40, F + 0x42);
+    m.cpu().resumeHere();
+    EXPECT_EQ(m.runQuantum(100), CpuEngine::StopReason::StepDone);
+    EXPECT_EQ(m.cpu().pc(), F + 0x42);
+    EXPECT_EQ(m.cpu().instructionCount(), 3u) << "b, adds, then stop before b";
+    m.cpu().clearStepRange();
+    EXPECT_EQ(m.runQuantum(10), CpuEngine::StopReason::Quantum);
+}
+
 // 0x80: SysTick LOAD = 100, CTRL = 7 (HCLK, TICKINT, ENABLE); loop: wfi ; adds r3,#1 ; b loop
 // 0x90: SysTick_Handler: adds r4,#1 ; bx lr
 TEST_F(MachineTest, WfiWaitsForInterrupt) {

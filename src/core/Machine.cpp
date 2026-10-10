@@ -420,10 +420,11 @@ CpuEngine::StopReason Machine::runChunk(uint32_t n) {
 }
 
 CpuEngine::StopReason Machine::step() {
+    cpu_.resumeHere(); // a step always executes the instruction, breakpoint or not
     const auto r = runChunk(1);
     if (r == CpuEngine::StopReason::Fault)
         return r;
-    status_ = r == CpuEngine::StopReason::Breakpoint ? "Breakpoint" : "Paused";
+    status_ = "Paused";
     return r;
 }
 
@@ -441,7 +442,7 @@ CpuEngine::StopReason Machine::runQuantum(uint32_t insns) {
         last = runChunk(n);
         if (last == CpuEngine::StopReason::Fault)
             return last;
-        if (last == CpuEngine::StopReason::Breakpoint)
+        if (last == CpuEngine::StopReason::Breakpoint || last == CpuEngine::StopReason::StepDone)
             break;
         const uint32_t done = static_cast<uint32_t>(lastChunkCycles_); // executed + slept
         if (done == 0) {
@@ -453,7 +454,10 @@ CpuEngine::StopReason Machine::runQuantum(uint32_t insns) {
         idle = 0;
         left -= std::min(left, done);
     }
-    status_ = last == CpuEngine::StopReason::Breakpoint ? "Breakpoint" : sleeping_ ? "Running (WFI sleep)" : "Running";
+    status_ = last == CpuEngine::StopReason::Breakpoint ? "Breakpoint"
+              : last == CpuEngine::StopReason::StepDone ? "Paused"
+              : sleeping_                               ? "Running (WFI sleep)"
+                                                        : "Running";
     return last;
 }
 
@@ -488,6 +492,13 @@ MachineSnapshot Machine::snapshot() const {
     s.rccCfgr = rcc_.cfgr();
     s.rccAhb1enr = rcc_.ahb1enr();
     s.sysclk = rcc_.sysclk();
+    s.hclk = rcc_.hclk();
+    s.pclk1 = rcc_.pclk1();
+    s.pclk2 = rcc_.pclk2();
+    s.timclk1 = rcc_.timclk1();
+    s.timclk2 = rcc_.timclk2();
+    s.rccPllcfgr = rcc_.pllcfgr();
+    s.flashAcr = flashAcr_.value(0);
     s.systickCtrl = systick_.ctrl();
     s.systickVal = systick_.val();
     s.systickLoad = systick_.load();
@@ -508,4 +519,11 @@ MachineSnapshot Machine::snapshot() const {
 
 void Machine::readMemory(uint32_t addr, uint8_t *out, size_t len) const {
     cpu_.readMem(addr, out, len);
+}
+
+void Machine::writeMemory(uint32_t addr, const uint8_t *data, size_t len) {
+    cpu_.writeMem(addr, data, len);
+    const auto inFlash = [&](uint32_t base) { return addr < base + mcu::kFlashSize && addr + len > base; };
+    if (inFlash(mcu::kFlashBase) || inFlash(mcu::kFlashAlias))
+        cpu_.flushCodeCache();
 }
