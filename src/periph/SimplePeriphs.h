@@ -17,18 +17,26 @@ public:
 
     uint32_t read32(uint32_t addr) override;
     void write32(uint32_t addr, uint32_t value) override;
+    uint32_t partialWriteBase(uint32_t addr) override;
     void tick(uint32_t cycles, uint32_t sysclk) override;
     void reset() override;
+    // CPU cycles until the update interrupt would be pended; UINT64_MAX if it cannot be.
+    uint64_t cyclesUntilInterrupt(uint32_t sysclk) const;
 
     uint32_t cnt() const { return cnt_; }
     uint32_t arr() const { return arr_; }
     uint32_t psc() const { return psc_; }
     uint32_t cr1() const { return cr1_; }
     uint32_t ccr1() const { return ccr1_; }
+    // Mean level of output channel ch (1..4) over a PWM period: 0..1, or -1 if the channel is
+    // not an enabled output-compare output. PWM mode 1/2, forced levels, CCxP polarity.
+    double outputLevel(int ch) const;
 
 private:
     void updateIrq();
     uint32_t timerClock(uint32_t sysclk) const;
+    // TIM2 and TIM5 have 32-bit counters, the others 16-bit.
+    uint32_t counterMask() const { return timIndex_ == 2 || timIndex_ == 5 ? 0xFFFFFFFFu : 0xFFFFu; }
 
     const char *name_;
     uint32_t base_;
@@ -65,6 +73,7 @@ public:
 
     uint32_t read32(uint32_t addr) override;
     void write32(uint32_t addr, uint32_t value) override;
+    uint32_t partialWriteBase(uint32_t addr) override;
     void reset() override;
 
     void setAnalogValue(uint32_t value12) { analog_ = value12 & 0xFFFu; }
@@ -98,6 +107,7 @@ public:
 
     uint32_t read32(uint32_t addr) override;
     void write32(uint32_t addr, uint32_t value) override;
+    uint32_t partialWriteBase(uint32_t addr) override;
     void reset() override;
 
 private:
@@ -124,6 +134,7 @@ public:
 
     uint32_t read32(uint32_t addr) override;
     void write32(uint32_t addr, uint32_t value) override;
+    uint32_t partialWriteBase(uint32_t addr) override;
     void reset() override;
 
 private:

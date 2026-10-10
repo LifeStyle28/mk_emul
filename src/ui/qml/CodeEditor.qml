@@ -13,11 +13,12 @@ Item {
         editor.text = s
     }
 
-    readonly property var te: editor.contentItem
     readonly property int lineCount: editor.text.length === 0 ? 1 : editor.text.split("\n").length
+    // TextArea is itself the text item (it has no contentItem): measure its real line height,
+    // otherwise the gutter numbers drift away from the text lines.
     readonly property real lineH: {
-        if (te && te.lineCount > 0 && te.contentHeight > 0)
-            return te.contentHeight / te.lineCount
+        if (editor.lineCount > 0 && editor.contentHeight > 0)
+            return editor.contentHeight / editor.lineCount
         return Math.ceil(editor.font.pixelSize * 1.4)
     }
 

@@ -2,12 +2,15 @@
 
 #include "ui/bridge/CHighlighter.h"
 
+#include "core/Addresses.h"
+
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QMetaType>
 #include <QQuickTextDocument>
+#include <QTimer>
 
 Q_DECLARE_METATYPE(MachineSnapshot)
 Q_DECLARE_METATYPE(QVector<DisasmModel::Row>)
@@ -22,7 +25,9 @@ void MachineWorker::initialize() {
         return;
     }
     disasm_.open(nullptr);
+    clock_.start();
     machine_.setUartTx([this](uint8_t b) { uartBuf_.append(static_cast<char>(b)); });
+    machine_.setWarningSink([this](const std::string &text) { emit warning(QString::fromStdString(text)); });
     emit inited(true, {});
     emitSnap(true);
     requestDisasm();
@@ -41,14 +46,14 @@ void MachineWorker::emitSnap(bool force) {
 
 void MachineWorker::reset() {
     machine_.reset();
-    running_ = false;
+    setRunning(false);
     emitSnap(true);
     requestDisasm();
     emit statusChanged(QString::fromStdString(machine_.status()));
 }
 
 void MachineWorker::step() {
-    running_ = false;
+    setRunning(false);
     machine_.step();
     emitSnap(true);
     requestDisasm();
@@ -56,12 +61,32 @@ void MachineWorker::step() {
 }
 
 void MachineWorker::startRun() {
-    running_ = true;
+    setRunning(true);
+    pacer_.start(static_cast<uint64_t>(clock_.nsecsElapsed()));
     tick();
 }
 
+void MachineWorker::setSpeed(double speed) {
+    pacer_.setSpeed(speed);
+    if (running_)
+        pacer_.start(static_cast<uint64_t>(clock_.nsecsElapsed())); // re-anchor at the new speed
+}
+
+void MachineWorker::scheduleTick(uint64_t waitNs) {
+    // Ticks from an earlier run (before a pause/stop) must not start a second chain.
+    const quint64 gen = runGen_;
+    auto next = [this, gen] {
+        if (gen == runGen_)
+            tick();
+    };
+    if (waitNs >= 1000000) // sleep only for >= 1 ms; shorter waits are absorbed by the next chunk
+        QTimer::singleShot(static_cast<int>(waitNs / 1000000), Qt::PreciseTimer, this, next);
+    else
+        QMetaObject::invokeMethod(this, next, Qt::QueuedConnection);
+}
+
 void MachineWorker::pause() {
-    running_ = false;
+    setRunning(false);
     emitSnap(true);
     requestDisasm();
     emit statusChanged(QStringLiteral("Paused"));
@@ -70,31 +95,49 @@ void MachineWorker::pause() {
 void MachineWorker::tick() {
     if (!running_)
         return;
-    const auto stop = machine_.runQuantum(12000);
+    const uint32_t hclk = machine_.rcc().hclk();
+    const uint64_t before = machine_.cpu().instructionCount();
+    const auto stop = machine_.runQuantum(pacer_.chunkInstructions(hclk));
+    const uint64_t executed = machine_.cpu().instructionCount() - before;
+    const uint64_t waitNs = pacer_.advance(executed, hclk, static_cast<uint64_t>(clock_.nsecsElapsed()));
+    if (pacer_.measuredSpeed() != lastSpeed_) {
+        lastSpeed_ = pacer_.measuredSpeed();
+        emit speedMeasured(lastSpeed_);
+    }
     emitSnap(stop != CpuEngine::StopReason::Quantum);
     if (stop == CpuEngine::StopReason::Breakpoint || stop == CpuEngine::StopReason::Fault) {
-        running_ = false;
+        setRunning(false);
         requestDisasm();
         emit statusChanged(QString::fromStdString(machine_.status()));
         return;
     }
-    QMetaObject::invokeMethod(this, "tick", Qt::QueuedConnection);
+    scheduleTick(waitNs);
 }
 
 void MachineWorker::loadPath(const QString &path) {
-    running_ = false;
+    setRunning(false);
     auto img = machine_.loadFirmware(path.toStdString());
+    if (img.ok)
+        clearConsole();
     emitSnap(true);
     requestDisasm();
     emit statusChanged(QString::fromStdString(img.ok ? machine_.status() : img.error));
 }
 
 void MachineWorker::loadBuiltin() {
-    running_ = false;
+    setRunning(false);
     machine_.loadBuiltinBlinky();
+    clearConsole();
     emitSnap(true);
     requestDisasm();
     emit statusChanged(QString::fromStdString(machine_.status()));
+}
+
+// A new firmware starts with an empty UART console. Bytes of the previous firmware that are
+// still buffered are dropped here, and the signal is queued after the snapshots already sent.
+void MachineWorker::clearConsole() {
+    uartBuf_.clear();
+    emit consoleCleared();
 }
 
 void MachineWorker::setButton(bool pressed) { machine_.setButtonPressed(pressed); }
@@ -112,6 +155,8 @@ void MachineWorker::requestMemory(quint32 addr) {
 void MachineWorker::requestDisasm() {
     const uint32_t pc = machine_.cpu().pc();
     uint32_t start = pc > 32 ? (pc - 32) & ~1u : pc & ~1u;
+    if (pc >= mcu::kFlashBase && start < mcu::kFlashBase)
+        start = mcu::kFlashBase; // nothing is mapped just below flash
     uint8_t buf[128];
     machine_.readMemory(start, buf, sizeof(buf));
     auto lines = disasm_.disassemble(buf, sizeof(buf), start, pc, machine_.breakpoints());
@@ -146,14 +191,32 @@ EmulatorController::EmulatorController(QObject *parent)
         emit statusChanged();
     });
     connect(worker_, &MachineWorker::snapshotReady, this, &EmulatorController::applySnapshot);
+    connect(worker_, &MachineWorker::consoleCleared, &uart_, &UartModel::clear);
+    // Emulator warnings (e.g. access to an unemulated peripheral) go to the build log panel.
+    connect(worker_, &MachineWorker::warning, this, [this](const QString &text) {
+        if (!buildLog_.isEmpty() && !buildLog_.endsWith('\n'))
+            buildLog_ += '\n';
+        buildLog_ += QStringLiteral("emulator warning: ") + text + '\n';
+        emit buildLogChanged();
+    });
     connect(worker_, &MachineWorker::statusChanged, this, [this](const QString &s) {
         status_ = s;
         emit statusChanged();
-        if (s == QLatin1String("Paused") || s == QLatin1String("Breakpoint") || s.startsWith(QLatin1String("read"))
-            || s.startsWith(QLatin1String("fetch")) || s.startsWith(QLatin1String("write"))) {
-            running_ = false;
+    });
+    // The worker reports run/stop explicitly; guessing from status text broke when fault
+    // messages changed ("HardFault: ..." left the UI showing RUNNING).
+    connect(worker_, &MachineWorker::speedMeasured, this, [this](double speed) {
+        measuredSpeed_ = speed;
+        emit speedChanged();
+    });
+    connect(worker_, &MachineWorker::runStateChanged, this, [this](bool running) {
+        if (running_ != running) {
+            running_ = running;
             emit runningChanged();
         }
+        if (!running)
+            measuredSpeed_ = 0.0; // show "—" until the next run is measured
+        emit speedChanged();
     });
     connect(worker_, &MachineWorker::memoryReady, this, [this](quint32 addr, const QByteArray &data) {
         memory_.setBytes(addr, data);
@@ -176,6 +239,8 @@ EmulatorController::EmulatorController(QObject *parent)
 }
 
 EmulatorController::~EmulatorController() {
+    if (buildThread_)
+        buildThread_->wait(); // it uses builder_ and posts back to this object
     QMetaObject::invokeMethod(worker_, "pause", Qt::BlockingQueuedConnection);
     workerThread_.quit();
     workerThread_.wait();
@@ -210,10 +275,14 @@ void EmulatorController::applySnapshot(const MachineSnapshot &snap, const QByteA
     per.push_back({"TIM2_CNT", hex(snap.tim2Cnt)});
     per.push_back({"ADC1_DR", hex(snap.adcDr)});
     per.push_back({"VTOR", hex(snap.vtor)});
+    per.push_back({"SCB_CFSR", hex(snap.cfsr)});
+    per.push_back({"SCB_HFSR", hex(snap.hfsr)});
+    per.push_back({"SCB_BFAR", hex(snap.bfar)});
+    per.push_back({"SCB_CPACR", hex(snap.cpacr)});
     per.push_back({"INSNS", QString::number(snap.instructions)});
     periph_.update(per);
 
-    board_.setLeds(snap.leds);
+    board_.setLeds(snap.leds, snap.ledLevel);
     uart_.appendBytes(uart);
     pcText_ = hex(snap.pc);
     status_ = QString::fromStdString(snap.haltReason);
@@ -224,6 +293,22 @@ void EmulatorController::reset() {
     running_ = false;
     emit runningChanged();
     QMetaObject::invokeMethod(worker_, "reset", Qt::QueuedConnection);
+}
+
+void EmulatorController::setSpeed(double speed) {
+    if (speed < 0.0)
+        speed = 0.0;
+    if (speed == speed_)
+        return;
+    speed_ = speed;
+    emit speedChanged();
+    QMetaObject::invokeMethod(worker_, "setSpeed", Qt::QueuedConnection, Q_ARG(double, speed));
+}
+
+QString EmulatorController::measuredSpeedText() const {
+    if (!running_ || measuredSpeed_ <= 0.0)
+        return QStringLiteral("—");
+    return QStringLiteral("×%1").arg(measuredSpeed_, 0, 'f', measuredSpeed_ < 10.0 ? 2 : 0);
 }
 
 void EmulatorController::run() {
@@ -257,10 +342,18 @@ void EmulatorController::loadBuiltin() {
     QMetaObject::invokeMethod(worker_, "loadBuiltin", Qt::QueuedConnection);
 }
 
-static quint32 parseAddr(const QString &t) {
+static bool parseAddr(const QString &t, quint32 *out) {
     bool ok = false;
-    quint32 v = t.trimmed().toUInt(&ok, 0);
-    return ok ? v : 0;
+    *out = t.trimmed().toUInt(&ok, 0);
+    return ok;
+}
+
+bool EmulatorController::addressFromText(const QString &text, quint32 *out) {
+    if (parseAddr(text, out))
+        return true;
+    status_ = QStringLiteral("Invalid address: \"%1\" (use hex like 0x08000000)").arg(text.trimmed());
+    emit statusChanged();
+    return false;
 }
 
 void EmulatorController::setBreakpointText(const QString &t) {
@@ -278,15 +371,24 @@ void EmulatorController::setMemoryAddressText(const QString &t) {
 }
 
 void EmulatorController::addBreakpoint() {
-    QMetaObject::invokeMethod(worker_, "addBreakpoint", Qt::QueuedConnection, Q_ARG(quint32, parseAddr(breakpointText_)));
+    quint32 addr = 0;
+    if (!addressFromText(breakpointText_, &addr))
+        return;
+    QMetaObject::invokeMethod(worker_, "addBreakpoint", Qt::QueuedConnection, Q_ARG(quint32, addr));
 }
 
 void EmulatorController::removeBreakpoint() {
-    QMetaObject::invokeMethod(worker_, "removeBreakpoint", Qt::QueuedConnection, Q_ARG(quint32, parseAddr(breakpointText_)));
+    quint32 addr = 0;
+    if (!addressFromText(breakpointText_, &addr))
+        return;
+    QMetaObject::invokeMethod(worker_, "removeBreakpoint", Qt::QueuedConnection, Q_ARG(quint32, addr));
 }
 
 void EmulatorController::goMemory() {
-    QMetaObject::invokeMethod(worker_, "requestMemory", Qt::QueuedConnection, Q_ARG(quint32, parseAddr(memoryAddressText_)));
+    quint32 addr = 0;
+    if (!addressFromText(memoryAddressText_, &addr))
+        return;
+    QMetaObject::invokeMethod(worker_, "requestMemory", Qt::QueuedConnection, Q_ARG(quint32, addr));
 }
 
 void EmulatorController::attachHighlighter(QQuickTextDocument *doc) {
@@ -296,17 +398,35 @@ void EmulatorController::attachHighlighter(QQuickTextDocument *doc) {
 }
 
 void EmulatorController::compileAndLoad() {
+    if (building_)
+        return;
     project_.saveAll();
     const QString work = dataRoot_ + "/project_build";
     const QString device = dataRoot_ + "/device/stm32f407";
-    QString elf;
-    QString log;
-    const bool ok = builder_.compile(project_.files(), work, device, &elf, &log);
-    buildLog_ = log;
+    const auto files = project_.files();
+    building_ = true;
+    emit buildingChanged();
+    buildLog_ = QStringLiteral("Building…\n");
     emit buildLogChanged();
-    if (ok) {
-        firmwarePath_ = elf;
-        emit firmwarePathChanged();
-        QMetaObject::invokeMethod(worker_, "loadPath", Qt::QueuedConnection, Q_ARG(QString, elf));
-    }
+    // The first build of a HAL / FreeRTOS project compiles the libraries (a few seconds):
+    // run gcc off the UI thread so the window stays responsive.
+    QThread *thread = QThread::create([this, files, work, device] {
+        QString elf;
+        QString log;
+        const bool ok = builder_.compile(files, work, device, &elf, &log);
+        QMetaObject::invokeMethod(this, [this, ok, elf, log] {
+            building_ = false;
+            emit buildingChanged();
+            buildLog_ = log;
+            emit buildLogChanged();
+            if (ok) {
+                firmwarePath_ = elf;
+                emit firmwarePathChanged();
+                QMetaObject::invokeMethod(worker_, "loadPath", Qt::QueuedConnection, Q_ARG(QString, elf));
+            }
+        }, Qt::QueuedConnection);
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    buildThread_ = thread;
+    thread->start();
 }

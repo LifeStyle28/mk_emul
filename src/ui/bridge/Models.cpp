@@ -10,6 +10,8 @@
 #include <QTimer>
 #include <QUrl>
 
+#include <cmath>
+
 RegisterModel::RegisterModel(QObject *parent)
     : QAbstractListModel(parent) {}
 
@@ -44,23 +46,23 @@ void RegisterModel::update(const QVector<QPair<QString, QString>> &rows) {
 
 MemoryModel::MemoryModel(QObject *parent)
     : QAbstractListModel(parent)
-    , data_(256, 0) {}
+    , data_(kMemoryBytes, 0) {}
 
 int MemoryModel::rowCount(const QModelIndex &parent) const {
-    return parent.isValid() ? 0 : 16;
+    return parent.isValid() ? 0 : kMemoryBytes / kMemoryBytesPerRow;
 }
 
 QVariant MemoryModel::data(const QModelIndex &index, int role) const {
     if (!index.isValid())
         return {};
     const int row = index.row();
-    const quint32 addr = address_ + static_cast<quint32>(row * 16);
+    const quint32 addr = address_ + static_cast<quint32>(row * kMemoryBytesPerRow);
     if (role == AddrRole)
         return QStringLiteral("0x") + QString("%1").arg(addr, 8, 16, QChar('0')).toUpper();
     QString hex;
     QString ascii;
-    for (int i = 0; i < 16; ++i) {
-        const int off = row * 16 + i;
+    for (int i = 0; i < kMemoryBytesPerRow; ++i) {
+        const int off = row * kMemoryBytesPerRow + i;
         const auto b = static_cast<unsigned char>(off < data_.size() ? data_[off] : 0);
         hex += QString("%1 ").arg(b, 2, 16, QChar('0')).toUpper();
         ascii += (b >= 32 && b < 127) ? QChar(b) : QChar('.');
@@ -166,11 +168,24 @@ void PeriphModel::update(const QVector<QPair<QString, QString>> &rows) {
 BoardModel::BoardModel(QObject *parent)
     : QObject(parent) {}
 
-void BoardModel::setLeds(quint32 mask) {
-    if (leds_ == mask)
-        return;
+void BoardModel::setLeds(quint32 mask, const float levels[4]) {
+    // Duty cycles are shown with 1% steps, so tiny changes do not re-render the board.
+    bool changed = leds_ != mask;
+    for (int i = 0; i < 4; ++i) {
+        const float level = std::round(levels[i] * 100.0f) / 100.0f;
+        changed = changed || level != levels_[i];
+        levels_[i] = level;
+    }
     leds_ = mask;
-    emit ledsChanged();
+    if (changed)
+        emit ledsChanged();
+}
+
+QVariantList BoardModel::ledLevels() const {
+    QVariantList out;
+    for (float level : levels_)
+        out.push_back(static_cast<double>(level));
+    return out;
 }
 
 void BoardModel::setButton(bool pressed) {
@@ -314,6 +329,14 @@ void ProjectModel::collectFiles(const QString &dir, const QString &root, QString
                                   "_deps", ".vs"};
     for (const auto &sub : d.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
         if (skip.contains(sub, Qt::CaseInsensitive))
+            continue;
+        const QDir sd(d.filePath(sub));
+        // Drivers/ of a CubeMX project: its HAL + CMSIS copy (the emulator brings its own, see
+        // ArmGccBuilder). Debug/, Release/ of STM32CubeIDE: build output. A student's own
+        // "drivers" or "debug" folder with sources is kept.
+        if (sub == "Drivers" && (sd.exists("STM32F4xx_HAL_Driver") || sd.exists("CMSIS")))
+            continue;
+        if ((sub == "Debug" || sub == "Release") && (sd.exists("makefile") || sd.exists("objects.list")))
             continue;
         collectFiles(d.filePath(sub), root, out);
     }

@@ -20,6 +20,8 @@ public:
                                   const std::string &hintName);
     static void writeFlash(CpuEngine &cpu, uint32_t addr, const void *data, size_t size);
     static void installBuiltinBlinky(CpuEngine &cpu);
+    // True if data starts with a Cortex-M vector table: initial SP in SRAM/CCM, Thumb reset vector.
+    static bool looksLikeVectorTable(const uint8_t *data, size_t size, std::string *why);
 
 private:
     static LoadedImage loadElf(CpuEngine &cpu, const uint8_t *data, size_t size);

@@ -33,7 +33,19 @@ void Nvic::reset() {
     scr_ = 0;
     ccr_ = 0x00000200u;
     cpacr_ = 0;
+    if (cpu_)
+        cpu_->setCpacr(0);
+    shcsr_ = 0;
+    cfsr_ = 0;
+    hfsr_ = 0;
+    mmfar_ = 0;
+    bfar_ = 0;
+    fpccr_ = 0xC0000000u; // ASPEN | LSPEN
+    fpcar_ = 0;
+    fpdscr_ = 0;
     currentException_ = 0;
+    pendingEnabled_ = false;
+    resetRequested_ = false;
     systickPending_ = 0;
     pendsvPending_ = 0;
     nmiPending_ = 0;
@@ -65,6 +77,7 @@ void Nvic::setPendingBit(int exceptionNumber, bool on) {
         else
             ispr_[word] &= ~(1u << bit);
     }
+    updatePendingFlag();
 }
 
 bool Nvic::pending(int exceptionNumber) const {
@@ -89,8 +102,12 @@ bool Nvic::enabled(int exceptionNumber) const {
 }
 
 int Nvic::priorityOf(int exceptionNumber) const {
-    if (exceptionNumber < 4)
-        return -3;
+    if (exceptionNumber == 1)
+        return -3; // Reset
+    if (exceptionNumber == 2)
+        return -2; // NMI
+    if (exceptionNumber == 3)
+        return -1; // HardFault
     if (exceptionNumber < 16) {
         const int idx = exceptionNumber - 4;
         if (idx >= 0 && idx < 12)
@@ -101,6 +118,41 @@ int Nvic::priorityOf(int exceptionNumber) const {
     if (irq >= 0 && irq < 240)
         return ipr_[irq];
     return 0;
+}
+
+int Nvic::groupPriority(int priority) const {
+    if (priority < 0)
+        return priority;
+    // PRIGROUP = n: bits [7:n+1] are the group (preemption) priority, the rest is subpriority.
+    const uint32_t prigroup = (aircr_ >> 8) & 7u;
+    const uint32_t mask = (0xFFu << (prigroup + 1)) & 0xFFu;
+    return static_cast<int>(static_cast<uint32_t>(priority) & mask);
+}
+
+void Nvic::updatePendingFlag() {
+    bool any = nmiPending_ || pendsvPending_ || systickPending_;
+    for (size_t i = 0; !any && i < ispr_.size(); ++i)
+        any = (ispr_[i] & iser_[i]) != 0;
+    pendingEnabled_ = any;
+}
+
+int Nvic::executionPriority(CpuEngine &cpu) const {
+    int pri = 256;
+    if (currentException_ != 0)
+        pri = groupPriority(priorityOf(currentException_));
+    const int basepri = static_cast<int>(cpu.basepri() & 0xFFu);
+    if (basepri != 0)
+        pri = std::min(pri, groupPriority(basepri));
+    if (cpu.primask() & 1u)
+        pri = std::min(pri, 0); // only NMI and HardFault
+    if (cpu.faultmask() & 1u)
+        pri = std::min(pri, -1); // only NMI
+    return pri;
+}
+
+bool Nvic::wouldPreempt(CpuEngine &cpu) const {
+    const int cand = highestPending();
+    return cand != 0 && groupPriority(priorityOf(cand)) < executionPriority(cpu);
 }
 
 int Nvic::highestPending() const {
@@ -128,6 +180,10 @@ uint32_t Nvic::vectorAddress(int exceptionNumber) const {
     return cpu_->read32(table + static_cast<uint32_t>(exceptionNumber) * 4u);
 }
 
+// Unicorn keeps the active stack pointer in SP and the other one aside; which is which follows
+// its own view of the mode (handler mode or SPSEL = 0 means MSP). It ignores SPSEL writes in
+// handler mode, and MSP/PSP/CONTROL writes from unprivileged thread code. So entry and exit
+// switch SPSEL while in thread mode, run with nPRIV cleared, then set MSP and PSP explicitly.
 void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
     const uint32_t xpsr = cpu.xpsr();
     const uint32_t control = cpu.control();
@@ -135,11 +191,21 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
     const bool handlerMode = ipsr != 0;
     const bool spSel = (control & 2u) != 0;
     const bool usePsp = !handlerMode && spSel;
+    const bool nPriv = (control & 1u) != 0;
+    // CONTROL.FPCA: the interrupted code has an active FP context (Unicorn sets it on the first
+    // FP instruction). Then the extended frame also holds S0-S15 and FPSCR.
+    const bool fpFrame = (control & kControlFpca) != 0;
 
-    uint32_t frame = usePsp ? cpu.psp() : cpu.msp();
+    cpu.setNPriv(false);
+    uint32_t msp = cpu.msp();
+    uint32_t psp = cpu.psp();
+    uint32_t &sp = usePsp ? psp : msp;
+
+    uint32_t frame = sp;
     const uint32_t align = frame & 4u;
     frame &= ~4u;
-    frame -= 0x20u;
+    frame -= fpFrame ? kFpFrameSize : kBasicFrameSize;
+    sp = frame;
 
     uint32_t r[16];
     cpu.snapshotRegs(r);
@@ -157,17 +223,37 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
     else
         stackedXpsr &= ~(1u << 9);
     cpu.write32(frame + 28, stackedXpsr);
+    if (fpFrame) {
+        // Saved eagerly; with lazy stacking (FPCCR.LSPEN) the hardware only reserves the space
+        // and fills it on the handler's first FP instruction - the same memory in the end.
+        for (int i = 0; i < 16; ++i)
+            cpu.write32(frame + 0x20u + 4u * i, cpu.sreg(i));
+        cpu.write32(frame + 0x60u, cpu.fpscr());
+        fpcar_ = frame + 0x20u;
+    }
 
-    if (usePsp)
-        cpu.setPsp(frame);
-    else
-        cpu.setMsp(frame);
+    // Still in the interrupted mode: the handler runs on MSP (SPSEL = 0) without an FP context.
+    // Its first FP instruction creates a new FP context with FPSCR = FPDSCR (FPCCR.ASPEN).
+    // Unicorn does that itself, but from its own FPDSCR, which the API cannot set and which
+    // stays 0. So for a non-zero FPDSCR the context is created here: FPSCR = FPDSCR and
+    // FPCA = 1. Only difference from the MCU: an exception nested in such a handler pushes an
+    // extended frame even if the handler used no FP instruction (same register values).
+    uint32_t handlerControl = control & ~(1u | 2u | kControlFpca);
+    if ((fpccr_ & (1u << 31)) && fpdscr_ != 0) {
+        cpu.setFpscr(fpdscr_);
+        handlerControl |= kControlFpca;
+    }
+    cpu.setControl(handlerControl);
+    cpu.setMsp(msp);
+    cpu.setPsp(psp);
 
     uint32_t excReturn = 0xFFFFFFF9u;
     if (handlerMode)
         excReturn = 0xFFFFFFF1u;
     else if (spSel)
         excReturn = 0xFFFFFFFDu;
+    if (fpFrame)
+        excReturn &= ~0x10u; // 0xFFFFFFE1 / E9 / ED
     cpu.setLr(excReturn);
 
     const uint32_t handler = vectorAddress(exceptionNumber);
@@ -175,8 +261,8 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
 
     const uint32_t newXpsr = (xpsr & ~0x1FFu) | (static_cast<uint32_t>(exceptionNumber) & 0x1FFu) | (1u << 24);
     cpu.setXpsr(newXpsr);
-    cpu.setControl(control & ~2u);
-    cpu.setSp(cpu.msp());
+    if (nPriv)
+        cpu.setNPriv(true); // handler mode is privileged anyway; applies again after return
 
     currentException_ = exceptionNumber;
     setPendingBit(exceptionNumber, false);
@@ -189,9 +275,15 @@ void Nvic::enterException(CpuEngine &cpu, int exceptionNumber) {
 void Nvic::exitException(CpuEngine &cpu, uint32_t excReturn) {
     const uint32_t mode = excReturn & 0xFu;
     const bool toPsp = mode == 0xDu;
-    const bool toHandler = mode == 0x1u;
+    const bool fpFrame = (excReturn & 0x10u) == 0;
+    const uint32_t control = cpu.control();
+    const bool nPriv = (control & 1u) != 0;
 
-    uint32_t frame = toPsp ? cpu.psp() : cpu.msp();
+    uint32_t msp = cpu.msp(); // handler mode: privileged, SPSEL = 0
+    uint32_t psp = cpu.psp();
+    uint32_t &sp = toPsp ? psp : msp;
+
+    const uint32_t frame = sp;
     const uint32_t r0 = cpu.read32(frame + 0);
     const uint32_t r1 = cpu.read32(frame + 4);
     const uint32_t r2 = cpu.read32(frame + 8);
@@ -200,6 +292,17 @@ void Nvic::exitException(CpuEngine &cpu, uint32_t excReturn) {
     const uint32_t lr = cpu.read32(frame + 20);
     const uint32_t pc = cpu.read32(frame + 24);
     const uint32_t xpsr = cpu.read32(frame + 28);
+
+    if (fpFrame) {
+        for (int i = 0; i < 16; ++i)
+            cpu.setSreg(i, cpu.read32(frame + 0x20u + 4u * i));
+        cpu.setFpscr(cpu.read32(frame + 0x60u));
+    }
+    sp = frame + (fpFrame ? kFpFrameSize : kBasicFrameSize) + ((xpsr & (1u << 9)) ? 4u : 0u);
+
+    // Still in handler mode: FPCA comes from EXC_RETURN; nPRIV is cleared until the stack
+    // pointers are set, otherwise Unicorn would ignore those writes in unprivileged thread mode.
+    cpu.setControl((fpFrame ? control | kControlFpca : control & ~kControlFpca) & ~1u);
 
     cpu.setReg(UC_ARM_REG_R0, r0);
     cpu.setReg(UC_ARM_REG_R1, r1);
@@ -210,20 +313,12 @@ void Nvic::exitException(CpuEngine &cpu, uint32_t excReturn) {
     cpu.setPc(pc & ~1u);
     cpu.setXpsr(xpsr | (1u << 24));
 
-    frame += 0x20u;
-    if (xpsr & (1u << 9))
-        frame += 4u;
-
-    if (toPsp) {
-        cpu.setPsp(frame);
-        cpu.setControl(cpu.control() | 2u);
-        cpu.setSp(frame);
-    } else {
-        cpu.setMsp(frame);
-        if (!toHandler)
-            cpu.setControl(cpu.control() & ~2u);
-        cpu.setSp(frame);
-    }
+    if (toPsp)
+        cpu.setControl(cpu.control() | 2u); // thread mode now: PSP becomes the active SP
+    cpu.setMsp(msp);
+    cpu.setPsp(psp);
+    if (nPriv)
+        cpu.setNPriv(true);
 
     currentException_ = static_cast<int>(xpsr & 0x1FFu);
     if (currentException_ >= 16) {
@@ -233,19 +328,85 @@ void Nvic::exitException(CpuEngine &cpu, uint32_t excReturn) {
     }
 }
 
-void Nvic::service(CpuEngine &cpu) {
-    if (cpu.primask() != 0)
-        return;
-    const int cand = highestPending();
-    if (cand == 0)
-        return;
-    if (currentException_ != 0) {
-        const int curPri = priorityOf(currentException_);
-        const int newPri = priorityOf(cand);
-        if (newPri >= curPri)
-            return;
+int Nvic::raiseFault(CpuEngine &cpu, FaultType type, uint32_t address) {
+    int exc = 3; // HardFault
+    uint32_t enableBit = 0;
+    switch (type) {
+    case FaultType::BusData:
+        cfsr_ |= (1u << 9) | (1u << 15); // PRECISERR | BFARVALID
+        bfar_ = address;
+        exc = 5;
+        enableBit = 1u << 17; // BUSFAULTENA
+        break;
+    case FaultType::BusFetch:
+        cfsr_ |= 1u << 8; // IBUSERR
+        exc = 5;
+        enableBit = 1u << 17;
+        break;
+    case FaultType::UndefInstr:
+        cfsr_ |= 1u << 16; // UNDEFINSTR
+        exc = 6;
+        enableBit = 1u << 18; // USGFAULTENA
+        break;
+    case FaultType::Unaligned:
+        cfsr_ |= 1u << 24; // UNALIGNED
+        exc = 6;
+        enableBit = 1u << 18;
+        break;
+    case FaultType::NoCoprocessor:
+        cfsr_ |= 1u << 19; // NOCP: FP instruction with the FPU disabled in CPACR
+        exc = 6;
+        enableBit = 1u << 18;
+        break;
+    case FaultType::Other:
+        break;
     }
-    enterException(cpu, cand);
+
+    if (exc != 3) {
+        // Configurable fault that is disabled, masked or not higher priority than the
+        // current context escalates to HardFault.
+        if (!(shcsr_ & enableBit) || groupPriority(priorityOf(exc)) >= executionPriority(cpu))
+            exc = 3;
+    }
+    if (exc == 3) {
+        if (currentException_ == 2 || currentException_ == 3)
+            return 0; // fault in HardFault/NMI: lockup
+        if (type != FaultType::Other)
+            hfsr_ |= 1u << 30; // FORCED
+    }
+
+    const uint32_t handler = vectorAddress(exc);
+    if (handler == 0 || handler == 0xFFFFFFFFu)
+        return 0;
+    enterException(cpu, exc);
+    return exc;
+}
+
+int Nvic::raiseSvc(CpuEngine &cpu) {
+    int exc = 11; // SVCall
+    if (groupPriority(priorityOf(exc)) >= executionPriority(cpu)) {
+        // SVC with SVCall masked or not higher priority than the current context -> HardFault.
+        if (currentException_ == 2 || currentException_ == 3)
+            return 0;
+        hfsr_ |= 1u << 30; // FORCED
+        exc = 3;
+    }
+    const uint32_t handler = vectorAddress(exc);
+    if (handler == 0 || handler == 0xFFFFFFFFu)
+        return 0;
+    enterException(cpu, exc);
+    return exc;
+}
+
+bool Nvic::takeResetRequest() {
+    const bool r = resetRequested_;
+    resetRequested_ = false;
+    return r;
+}
+
+void Nvic::service(CpuEngine &cpu) {
+    if (wouldPreempt(cpu))
+        enterException(cpu, highestPending());
 }
 
 uint32_t Nvic::debugIcsr() const {
@@ -276,6 +437,26 @@ uint32_t Nvic::read32(uint32_t addr) {
         return ccr_;
     if (addr == 0xE000ED88u)
         return cpacr_;
+    if (addr == 0xE000ED24u)
+        return shcsr_;
+    if (addr == 0xE000ED28u)
+        return cfsr_;
+    if (addr == 0xE000ED2Cu)
+        return hfsr_;
+    if (addr == 0xE000ED34u)
+        return mmfar_;
+    if (addr == 0xE000ED38u)
+        return bfar_;
+    if (addr == 0xE000EF34u)
+        return fpccr_;
+    if (addr == 0xE000EF38u)
+        return fpcar_;
+    if (addr == 0xE000EF3Cu)
+        return fpdscr_;
+    if (addr == 0xE000EF40u)
+        return 0x10110021u; // MVFR0: single precision, FP registers, sqrt, divide
+    if (addr == 0xE000EF44u)
+        return 0x11000011u; // MVFR1: FPv4 with FTZ/DN, half precision, fused MAC
     if (addr >= 0xE000ED18u && addr < 0xE000ED24u) {
         const uint32_t off = addr - 0xE000ED18u;
         uint32_t w = 0;
@@ -303,6 +484,16 @@ uint32_t Nvic::read32(uint32_t addr) {
     return 0;
 }
 
+uint32_t Nvic::partialWriteBase(uint32_t addr) {
+    // Set/clear-enable and set/clear-pending are write-1 registers, ICSR has trigger bits,
+    // CFSR/HFSR are rc_w1: untouched bytes must be 0 so they have no effect.
+    if (addr == 0xE000ED04u || addr == 0xE000ED28u || addr == 0xE000ED2Cu)
+        return 0;
+    if (addr >= 0xE000E100u && addr < 0xE000E2A0u)
+        return 0;
+    return read32(addr);
+}
+
 void Nvic::write32(uint32_t addr, uint32_t value) {
     if (addr == 0xE000ED04u) {
         if (value & (1u << 25))
@@ -315,6 +506,7 @@ void Nvic::write32(uint32_t addr, uint32_t value) {
             pendsvPending_ = 1;
         if (value & (1u << 31))
             nmiPending_ = 1;
+        updatePendingFlag();
         return;
     }
     if (addr == 0xE000ED08u) {
@@ -322,9 +514,13 @@ void Nvic::write32(uint32_t addr, uint32_t value) {
         return;
     }
     if (addr == 0xE000ED0Cu) {
-        aircr_ = (value & 0xFFFFu) | 0xFA050000u;
-        if ((value & 0x04u) && ((value >> 16) == 0x05FAu)) {
-            // SYSRESETREQ — Machine handles via halt? ignore, user clicks Reset
+        if ((value >> 16) != 0x05FAu)
+            return; // writes without VECTKEY are ignored
+        aircr_ = 0xFA050000u | (value & 0x700u); // PRIGROUP
+        if (value & 0x4u) {                    // SYSRESETREQ (NVIC_SystemReset)
+            resetRequested_ = true;
+            if (cpu_)
+                cpu_->stop();
         }
         return;
     }
@@ -337,13 +533,47 @@ void Nvic::write32(uint32_t addr, uint32_t value) {
         return;
     }
     if (addr == 0xE000ED88u) {
-        cpacr_ = value;
+        cpacr_ = value & 0x00F00000u; // only CP10/CP11 (the FPU) exist
+        if (cpu_)
+            cpu_->setCpacr(cpacr_);
+        return;
+    }
+    if (addr == 0xE000ED24u) {
+        shcsr_ = value & 0x0007FFFFu;
+        return;
+    }
+    if (addr == 0xE000ED28u) {
+        cfsr_ &= ~value; // rc_w1
+        return;
+    }
+    if (addr == 0xE000ED2Cu) {
+        hfsr_ &= ~value; // rc_w1
+        return;
+    }
+    if (addr == 0xE000ED34u) {
+        mmfar_ = value;
+        return;
+    }
+    if (addr == 0xE000ED38u) {
+        bfar_ = value;
+        return;
+    }
+    if (addr == 0xE000EF34u) {
+        fpccr_ = value & 0xC00001FBu;
+        return;
+    }
+    if (addr == 0xE000EF38u) {
+        fpcar_ = value & ~7u;
+        return;
+    }
+    if (addr == 0xE000EF3Cu) {
+        fpdscr_ = value & 0x07C00000u; // AHP, DN, FZ, RMode
         return;
     }
     if (addr >= 0xE000ED18u && addr < 0xE000ED24u) {
         const uint32_t off = addr - 0xE000ED18u;
         for (int i = 0; i < 4; ++i)
-            shpr_[off + i] = static_cast<uint8_t>((value >> (8 * i)) & 0xFFu);
+            shpr_[off + i] = static_cast<uint8_t>((value >> (8 * i)) & 0xF0u); // 4 priority bits
         return;
     }
     if (addr >= 0xE000E100u && addr < 0xE000E120u)
@@ -357,6 +587,7 @@ void Nvic::write32(uint32_t addr, uint32_t value) {
     else if (addr >= 0xE000E400u && addr < 0xE000E4F0u) {
         const uint32_t off = addr - 0xE000E400u;
         for (int i = 0; i < 4; ++i)
-            ipr_[off + i] = static_cast<uint8_t>((value >> (8 * i)) & 0xFFu);
+            ipr_[off + i] = static_cast<uint8_t>((value >> (8 * i)) & 0xF0u); // 4 priority bits
     }
+    updatePendingFlag(); // ISER/ICER/ISPR/ICPR may have changed
 }

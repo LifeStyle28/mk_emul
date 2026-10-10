@@ -2,6 +2,8 @@
 
 #include "periph/Rcc.h"
 
+#include <algorithm>
+
 SysTickTimer::SysTickTimer(IrqTarget *nvic, Rcc *rcc)
     : nvic_(nvic)
     , rcc_(rcc) {
@@ -34,6 +36,12 @@ uint32_t SysTickTimer::read32(uint32_t addr) {
     }
 }
 
+uint32_t SysTickTimer::partialWriteBase(uint32_t addr) {
+    if (addr - 0xE000E010u == 0x00)
+        return ctrl_; // reading CTRL clears COUNTFLAG
+    return read32(addr);
+}
+
 void SysTickTimer::write32(uint32_t addr, uint32_t value) {
     switch (addr - 0xE000E010u) {
     case 0x00:
@@ -44,10 +52,24 @@ void SysTickTimer::write32(uint32_t addr, uint32_t value) {
         break;
     case 0x08:
         val_ = 0;
+        ctrl_ &= ~(1u << 16); // any write to VAL also clears COUNTFLAG
         break;
     default:
         break;
     }
+}
+
+uint64_t SysTickTimer::cyclesUntilInterrupt(uint32_t sysclk) const {
+    if ((ctrl_ & 3u) != 3u || load_ == 0) // needs ENABLE and TICKINT
+        return UINT64_MAX;
+    uint64_t tickHz = (ctrl_ & 4u) ? (rcc_ ? rcc_->hclk() : sysclk) : (rcc_ ? rcc_->hclk() / 8 : sysclk / 8);
+    if (tickHz == 0)
+        tickHz = 1;
+    const uint64_t hclk = rcc_ ? rcc_->hclk() : sysclk;
+    // Mirrors tick(): from VAL=0 the first tick reloads, so LOAD+1 ticks to the next zero.
+    const uint64_t ticks = val_ ? val_ : static_cast<uint64_t>(load_) + 1;
+    const uint64_t need = ticks * hclk > frac_ ? ticks * hclk - frac_ : 0;
+    return std::max<uint64_t>(1, (need + tickHz - 1) / tickHz);
 }
 
 void SysTickTimer::tick(uint32_t cycles, uint32_t sysclk) {

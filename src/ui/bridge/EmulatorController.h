@@ -2,10 +2,13 @@
 
 #include "core/Disassembler.h"
 #include "core/Machine.h"
+#include "core/RealTimePacer.h"
 #include "toolchain/ArmGccBuilder.h"
 #include "ui/bridge/Models.h"
 
+#include <QElapsedTimer>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 #include <QThread>
 #include <QTimer>
@@ -34,6 +37,7 @@ public slots:
     void requestMemory(quint32 addr);
     void requestDisasm();
     void tick();
+    void setSpeed(double speed); // 1 = real time, 0 = unlimited
 
 signals:
     void inited(bool ok, const QString &error);
@@ -41,13 +45,28 @@ signals:
     void memoryReady(quint32 addr, const QByteArray &data);
     void disasmReady(const QVector<DisasmModel::Row> &rows);
     void statusChanged(const QString &text);
+    void runStateChanged(bool running);
+    void speedMeasured(double speed); // emulated/real time ratio
+    void warning(const QString &text);
+    void consoleCleared();
 
 private:
     void emitSnap(bool force);
+    void clearConsole();
+    void setRunning(bool running) {
+        running_ = running;
+        ++runGen_;
+        emit runStateChanged(running);
+    }
+    void scheduleTick(uint64_t waitNs);
 
     Machine machine_;
     Disassembler disasm_;
     bool running_ = false;
+    quint64 runGen_ = 0;
+    RealTimePacer pacer_;
+    QElapsedTimer clock_;
+    double lastSpeed_ = -1.0;
     qint64 lastSnapMs_ = 0;
     QByteArray uartBuf_;
 };
@@ -58,10 +77,13 @@ class EmulatorController : public QObject {
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(QString haltReason READ haltReason NOTIFY statusChanged)
     Q_PROPERTY(QString buildLog READ buildLog NOTIFY buildLogChanged)
+    Q_PROPERTY(bool building READ building NOTIFY buildingChanged)
     Q_PROPERTY(QString pcText READ pcText NOTIFY statusChanged)
     Q_PROPERTY(QString breakpointText READ breakpointText WRITE setBreakpointText NOTIFY breakpointTextChanged)
     Q_PROPERTY(QString memoryAddressText READ memoryAddressText WRITE setMemoryAddressText NOTIFY memoryAddressTextChanged)
     Q_PROPERTY(QString firmwarePath READ firmwarePath NOTIFY firmwarePathChanged)
+    Q_PROPERTY(double speed READ speed WRITE setSpeed NOTIFY speedChanged)
+    Q_PROPERTY(QString measuredSpeedText READ measuredSpeedText NOTIFY speedChanged)
 public:
     explicit EmulatorController(QObject *parent = nullptr);
     ~EmulatorController() override;
@@ -70,12 +92,17 @@ public:
     QString status() const { return status_; }
     QString haltReason() const { return status_; }
     QString buildLog() const { return buildLog_; }
+    bool building() const { return building_; }
     QString pcText() const { return pcText_; }
     QString breakpointText() const { return breakpointText_; }
     void setBreakpointText(const QString &t);
     QString memoryAddressText() const { return memoryAddressText_; }
     void setMemoryAddressText(const QString &t);
     QString firmwarePath() const { return firmwarePath_; }
+    // Emulation speed: 1 = real time (default), 0.1 = slower, 10 = faster, 0 = unlimited.
+    double speed() const { return speed_; }
+    void setSpeed(double speed);
+    QString measuredSpeedText() const;
 
     RegisterModel *registerModel() { return &registers_; }
     MemoryModel *memoryModel() { return &memory_; }
@@ -101,12 +128,16 @@ signals:
     void runningChanged();
     void statusChanged();
     void buildLogChanged();
+    void buildingChanged();
     void breakpointTextChanged();
     void memoryAddressTextChanged();
     void firmwarePathChanged();
+    void speedChanged();
 
 private:
     void applySnapshot(const MachineSnapshot &snap, const QByteArray &uart);
+    // Parses "0x..." / decimal; on error shows a status message and returns false.
+    bool addressFromText(const QString &text, quint32 *out);
 
     QThread workerThread_;
     MachineWorker *worker_ = nullptr;
@@ -119,11 +150,15 @@ private:
     ProjectModel project_;
     ArmGccBuilder builder_;
     bool running_ = false;
+    bool building_ = false;
+    QPointer<QThread> buildThread_; // a running build is waited for on exit
+    double speed_ = 1.0;
+    double measuredSpeed_ = 0.0;
     QString status_ = QStringLiteral("Starting…");
     QString buildLog_;
     QString pcText_ = QStringLiteral("0x00000000");
     QString breakpointText_ = QStringLiteral("0x08000008");
     QString memoryAddressText_ = QStringLiteral("0x20000000");
-    QString firmwarePath_;
+    QString firmwarePath_ = QStringLiteral("(builtin blinky)"); // Machine::initialize loads it
     QString dataRoot_;
 };

@@ -18,6 +18,7 @@ public:
 
     uint32_t read32(uint32_t addr) override;
     void write32(uint32_t addr, uint32_t value) override;
+    uint32_t partialWriteBase(uint32_t addr) override;
     void reset() override;
 
     void setSyscfgExticr(int index, uint32_t value);

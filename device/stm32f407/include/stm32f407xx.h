@@ -33,6 +33,7 @@ typedef enum {
     EXTI9_5_IRQn = 23,
     TIM2_IRQn = 28,
     TIM3_IRQn = 29,
+    TIM4_IRQn = 30,
     I2C1_EV_IRQn = 31,
     I2C1_ER_IRQn = 32,
     SPI1_IRQn = 35,
@@ -40,6 +41,7 @@ typedef enum {
     USART2_IRQn = 38,
     USART3_IRQn = 39,
     EXTI15_10_IRQn = 40,
+    TIM5_IRQn = 50,
     USART6_IRQn = 71
 } IRQn_Type;
 
@@ -99,6 +101,8 @@ typedef struct {
 
 #define TIM2_BASE (APB1PERIPH_BASE + 0x0000)
 #define TIM3_BASE (APB1PERIPH_BASE + 0x0400)
+#define TIM4_BASE (APB1PERIPH_BASE + 0x0800)
+#define TIM5_BASE (APB1PERIPH_BASE + 0x0C00)
 #define USART2_BASE (APB1PERIPH_BASE + 0x4400)
 #define USART3_BASE (APB1PERIPH_BASE + 0x4800)
 #define I2C1_BASE (APB1PERIPH_BASE + 0x5400)
@@ -131,6 +135,8 @@ typedef struct {
 #define SYSCFG ((SYSCFG_TypeDef *)SYSCFG_BASE)
 #define TIM2 ((TIM_TypeDef *)TIM2_BASE)
 #define TIM3 ((TIM_TypeDef *)TIM3_BASE)
+#define TIM4 ((TIM_TypeDef *)TIM4_BASE)
+#define TIM5 ((TIM_TypeDef *)TIM5_BASE)
 #define ADC1 ((ADC_TypeDef *)ADC1_BASE)
 #define SPI1 ((SPI_TypeDef *)SPI1_BASE)
 #define I2C1 ((I2C_TypeDef *)I2C1_BASE)
@@ -140,6 +146,9 @@ typedef struct {
 #define RCC_AHB1ENR_GPIOAEN (1U << 0)
 #define RCC_AHB1ENR_GPIODEN (1U << 3)
 #define RCC_APB1ENR_TIM2EN (1U << 0)
+#define RCC_APB1ENR_TIM3EN (1U << 1)
+#define RCC_APB1ENR_TIM4EN (1U << 2)
+#define RCC_APB1ENR_TIM5EN (1U << 3)
 #define RCC_APB1ENR_USART2EN (1U << 17)
 #define RCC_APB2ENR_USART1EN (1U << 4)
 #define RCC_APB2ENR_ADC1EN (1U << 8)
@@ -152,6 +161,35 @@ typedef struct {
 #define USART_SR_TXE (1U << 7)
 #define USART_SR_TC (1U << 6)
 #define USART_SR_RXNE (1U << 5)
+
+#define TIM_CR1_CEN (1U << 0)
+#define TIM_CR1_ARPE (1U << 7)
+#define TIM_DIER_UIE (1U << 0)
+#define TIM_SR_UIF (1U << 0)
+#define TIM_EGR_UG (1U << 0)
+/* CCMR1: channel 1 in bits 0-7, channel 2 in bits 8-15 (CCMR2: channels 3 and 4, same bits).
+   OCxM = 110 (OCxM_2 | OCxM_1): PWM mode 1, output active while CNT < CCRx. */
+#define TIM_CCMR1_OC1PE (1U << 3)
+#define TIM_CCMR1_OC1M_0 (1U << 4)
+#define TIM_CCMR1_OC1M_1 (1U << 5)
+#define TIM_CCMR1_OC1M_2 (1U << 6)
+#define TIM_CCMR1_OC2PE (1U << 11)
+#define TIM_CCMR1_OC2M_0 (1U << 12)
+#define TIM_CCMR1_OC2M_1 (1U << 13)
+#define TIM_CCMR1_OC2M_2 (1U << 14)
+#define TIM_CCMR2_OC3PE (1U << 3)
+#define TIM_CCMR2_OC3M_0 (1U << 4)
+#define TIM_CCMR2_OC3M_1 (1U << 5)
+#define TIM_CCMR2_OC3M_2 (1U << 6)
+#define TIM_CCMR2_OC4PE (1U << 11)
+#define TIM_CCMR2_OC4M_0 (1U << 12)
+#define TIM_CCMR2_OC4M_1 (1U << 13)
+#define TIM_CCMR2_OC4M_2 (1U << 14)
+#define TIM_CCER_CC1E (1U << 0)
+#define TIM_CCER_CC1P (1U << 1)
+#define TIM_CCER_CC2E (1U << 4)
+#define TIM_CCER_CC3E (1U << 8)
+#define TIM_CCER_CC4E (1U << 12)
 
 #ifdef __cplusplus
 }

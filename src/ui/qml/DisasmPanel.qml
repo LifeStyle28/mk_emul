@@ -14,34 +14,34 @@ PanelCard {
             width: ListView.view.width
             height: 20
             radius: 3
-            color: current ? Theme.pcLine : (isBreak ? Theme.breakLine : "transparent")
+            color: model.current ? Theme.pcLine : (model.isBreak ? Theme.breakLine : "transparent")
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 6
                 anchors.rightMargin: 6
                 spacing: 8
                 Label {
-                    text: current ? "▸" : (isBreak ? "●" : " ")
+                    text: model.current ? "▸" : (model.isBreak ? "●" : " ")
                     Layout.preferredWidth: 12
-                    color: current ? Theme.accent : Theme.danger
+                    color: model.current ? Theme.accent : Theme.danger
                     font.pixelSize: 10
                 }
                 Label {
-                    text: addr
+                    text: model.addr
                     Layout.preferredWidth: 88
                     font.family: Theme.monoFont
                     font.pixelSize: 11
                     color: Theme.codeBlue
                 }
                 Label {
-                    text: bytes
+                    text: model.bytes
                     Layout.preferredWidth: 72
                     font.family: Theme.monoFont
                     font.pixelSize: 11
                     color: Theme.muted
                 }
                 Label {
-                    text: text
+                    text: model.text
                     Layout.fillWidth: true
                     elide: Text.ElideRight
                     font.family: Theme.monoFont

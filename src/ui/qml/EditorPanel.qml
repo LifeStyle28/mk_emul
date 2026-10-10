@@ -6,7 +6,9 @@ PanelCard {
     id: root
     title: "Source"
     badge: (projectModel.dirty ? "● " : "") + (projectModel.currentName.length ? projectModel.currentName : "no file")
+    property bool maximized: false
     signal requestOpenFolder()
+    signal toggleMaximized()
 
     function addFromField() {
         const n = newName.text.trim().length ? newName.text : "new.c"
@@ -70,6 +72,14 @@ PanelCard {
                     font.pixelSize: 10
                     font.family: Theme.monoFont
                     elide: Text.ElideMiddle
+                }
+                AppButton {
+                    text: root.maximized ? "Restore" : "Expand"
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 500
+                    ToolTip.text: root.maximized ? "Show all panels again (F11)"
+                                                 : "Editor over the whole window (F11)"
+                    onClicked: root.toggleMaximized()
                 }
             }
         }

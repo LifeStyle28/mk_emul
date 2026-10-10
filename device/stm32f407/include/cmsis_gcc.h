@@ -24,4 +24,7 @@ __STATIC_INLINE void __set_PRIMASK(uint32_t priMask) {
 __STATIC_INLINE void __DSB(void) { __ASM volatile("dsb 0xF" ::: "memory"); }
 __STATIC_INLINE void __ISB(void) { __ASM volatile("isb 0xF" ::: "memory"); }
 __STATIC_INLINE void __NOP(void) { __ASM volatile("nop"); }
+__STATIC_INLINE void __WFI(void) { __ASM volatile("wfi" ::: "memory"); }
+__STATIC_INLINE void __WFE(void) { __ASM volatile("wfe" ::: "memory"); }
+__STATIC_INLINE void __SEV(void) { __ASM volatile("sev"); }
 #endif

@@ -79,6 +79,13 @@ uint32_t Exti::read32(uint32_t addr) {
     }
 }
 
+uint32_t Exti::partialWriteBase(uint32_t addr) {
+    const uint32_t off = addr - mcu::kExtiBase;
+    if (off == 0x10 || off == 0x14)
+        return 0; // SWIER triggers, PR is rc_w1: untouched bytes must stay 0
+    return read32(addr);
+}
+
 void Exti::write32(uint32_t addr, uint32_t value) {
     switch (addr - mcu::kExtiBase) {
     case 0x00:

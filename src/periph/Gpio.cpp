@@ -103,7 +103,8 @@ void GpioBank::write32(uint32_t addr, uint32_t value) {
         odr_ = static_cast<uint16_t>(value);
         break;
     case 0x18:
-        odr_ = static_cast<uint16_t>((odr_ | (value & 0xFFFFu)) & ~((value >> 16) & 0xFFFFu));
+        // BSx has priority over BRx when both are set for the same pin (RM0090 8.4.7).
+        odr_ = static_cast<uint16_t>((odr_ & ~((value >> 16) & 0xFFFFu)) | (value & 0xFFFFu));
         break;
     case 0x1C:
         lckr_ = value;

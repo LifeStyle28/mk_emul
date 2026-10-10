@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -28,7 +29,8 @@ struct MachineSnapshot {
     uint32_t pc = 0;
     uint32_t sp = 0;
     uint32_t lr = 0;
-    uint32_t leds = 0;
+    uint32_t leds = 0;     // bit i: LED i (PD12+i) lit at all
+    float ledLevel[4]{};   // brightness 0..1: ODR bit, or PWM duty when the pin is TIM4 CHx (AF2)
     bool button = false;
     uint32_t gpioD = 0;
     uint32_t rccCr = 0;
@@ -42,8 +44,13 @@ struct MachineSnapshot {
     uint32_t tim2Cnt = 0;
     uint32_t adcDr = 0;
     uint32_t vtor = 0;
+    uint32_t cfsr = 0;
+    uint32_t hfsr = 0;
+    uint32_t bfar = 0;
+    uint32_t cpacr = 0;
     uint64_t instructions = 0;
     std::string haltReason;
+    bool sleeping = false; // in WFI, waiting for an interrupt
     CpuEngine::StopReason stop = CpuEngine::StopReason::None;
 };
 
@@ -55,6 +62,8 @@ public:
     bool initialize(std::string *error);
     void reset();
     LoadedImage loadFirmware(const std::string &path);
+    // ELF/HEX/BIN image already in memory (BIN is placed at the flash base); used by tests.
+    LoadedImage loadFirmwareBuffer(const uint8_t *data, size_t size, const std::string &name);
     void loadBuiltinBlinky();
 
     CpuEngine::StopReason step();
@@ -75,10 +84,15 @@ public:
     CpuEngine &cpu() { return cpu_; }
     const CpuEngine &cpu() const { return cpu_; }
     Rcc &rcc() { return rcc_; }
+    Nvic &nvic() { return nvic_; }
     MmioBus &bus() { return bus_; }
 
     using UartTx = std::function<void(uint8_t)>;
     void setUartTx(UartTx cb);
+    // Firmware accessed a peripheral that is not emulated (reads 0, writes are dropped):
+    // "write to unemulated peripheral DMA1 @ 0x40026010", once per register until reset.
+    using WarningSink = std::function<void(const std::string &)>;
+    void setWarningSink(WarningSink cb) { warn_ = std::move(cb); }
 
     const std::string &status() const { return status_; }
     bool firmwareLoaded() const { return firmwareLoaded_; }
@@ -87,7 +101,20 @@ public:
 private:
     void wirePeripherals();
     void onGpioPin(int port, uint16_t odr, uint16_t idr);
+    void onUnmappedAccess(uint32_t addr, bool write);
     void applyResetCpu();
+    LoadedImage applyImage(LoadedImage img, const std::string &name);
+    void tickPeripherals(uint32_t insns);
+    // Called on MMIO access during a chunk: advance timers to the current instruction, so
+    // SysTick->VAL / TIMx->CNT read exactly, and cycles before a clock change use the old clock.
+    void syncTimers();
+    void deliverFault();
+    void resetMcu(); // peripherals, NVIC, CPU; keeps RAM and the instruction counter
+    // Runs up to n instructions, then advances timers and takes faults, SVC lockup,
+    // NVIC_SystemReset and pending interrupts.
+    CpuEngine::StopReason runChunk(uint32_t n);
+    // Instructions until SysTick/TIM would pend an interrupt, so chunks end exactly there.
+    uint32_t cyclesToNextEvent() const;
 
     CpuEngine cpu_;
     MmioBus bus_;
@@ -103,6 +130,10 @@ private:
     Usart usart6_;
     Timer tim2_;
     Timer tim3_;
+    Timer tim4_;
+    Timer tim5_;
+    Timer tim6_; // basic timers: HAL timebase of CubeMX FreeRTOS projects
+    Timer tim7_;
     Adc adc1_;
     Spi spi1_;
     I2c i2c1_;
@@ -114,8 +145,15 @@ private:
 
     bool buttonPressed_ = false;
     bool firmwareLoaded_ = false;
+    bool svcLockup_ = false;
+    bool inChunk_ = false;
+    uint64_t chunkTicked_ = 0;
+    uint64_t lastChunkCycles_ = 0; // cycles of the last chunk: executed or slept in WFI
+    bool sleeping_ = false;       // WFI executed, no interrupt pending yet // instructions of the current chunk already given to the timers
     uint32_t vectorBase_ = mcu::kFlashBase;
     std::string status_ = "Idle";
     UartTx uartTx_;
+    WarningSink warn_;
+    std::set<uint32_t> reportedUnmapped_; // register address | 1 for writes, already warned about
     uint16_t lastGpioIdr_[9]{};
 };

@@ -42,10 +42,36 @@ Reset_Handler:
 4:
     cmp r2, r4
     bcc 3b
+    ldr r0, =_sccmram       /* .ccmram: copy initial values to CCM RAM */
+    ldr r1, =_eccmram
+    ldr r2, =_siccmram
+    b 6f
+5:
+    ldr r3, [r2], #4
+    str r3, [r0], #4
+6:
+    cmp r0, r1
+    bcc 5b
     bl SystemInit
+    bl __libc_init_array    /* static constructors */
     bl main
     b .
 .size Reset_Handler, .-Reset_Handler
+
+/* Called by __libc_init_array / exit. -nostartfiles leaves out crti.o, which defines them. */
+.section .text._init,"ax",%progbits
+.weak _init
+.type _init, %function
+_init:
+    bx lr
+.size _init, .-_init
+
+.section .text._fini,"ax",%progbits
+.weak _fini
+.type _fini, %function
+_fini:
+    bx lr
+.size _fini, .-_fini
 
 .section .text.Default_Handler,"ax",%progbits
 Default_Handler:
