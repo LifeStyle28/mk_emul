@@ -19,6 +19,7 @@ int main(int argc, char *argv[]) {
     if (argc >= 2 && QString::fromUtf8(argv[1]) == QLatin1String("--headless")) {
         // Worker initializes asynchronously; wait via local event loop in GUI-less mode.
         // Usage: mk_emul --headless [steps] [firmware.elf|.hex|.bin]
+        controller.setDebugEnabled(false); // no gdb session: Run drives the machine directly
         int steps = 40000;
         if (argc >= 3)
             steps = QString::fromUtf8(argv[2]).toInt();
@@ -56,6 +57,8 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("boardModel"), controller.boardModel());
     engine.rootContext()->setContextProperty(QStringLiteral("uartModel"), controller.uartModel());
     engine.rootContext()->setContextProperty(QStringLiteral("projectModel"), controller.projectModel());
+    engine.rootContext()->setContextProperty(QStringLiteral("debugSession"), controller.debugger());
+    engine.rootContext()->setContextProperty(QStringLiteral("clockModel"), controller.clockModel());
 
     const QStringList qmlCandidates = {
         QStringLiteral("qrc:/MkEmul/Main.qml"),

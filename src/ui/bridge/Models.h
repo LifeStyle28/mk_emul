@@ -153,7 +153,10 @@ class ProjectModel : public QAbstractListModel {
     Q_PROPERTY(QString currentContent READ currentContent WRITE setCurrentContent NOTIFY currentContentChanged)
     Q_PROPERTY(QString currentName READ currentName NOTIFY currentIndexChanged)
     Q_PROPERTY(QString projectPath READ projectPath NOTIFY projectPathChanged)
+    Q_PROPERTY(QString projectName READ projectName NOTIFY projectPathChanged)
     Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
+    Q_PROPERTY(QStringList recentProjects READ recentProjects NOTIFY recentProjectsChanged)
+    Q_PROPERTY(QStringList examples READ examples CONSTANT)
 public:
     enum Roles { NameRole = Qt::UserRole + 1, ContentRole, DirtyRole, PathRole };
     explicit ProjectModel(QObject *parent = nullptr);
@@ -167,13 +170,26 @@ public:
     QString currentContent() const;
     QString currentName() const;
     QString projectPath() const { return projectPath_; }
+    QString projectName() const;
     bool dirty() const;
+    QStringList recentProjects() const { return recent_; }
+    QStringList examples() const; // folder names in examples/
 
     void setCurrentContent(const QString &text);
+    // The last opened project (settings), or examples/blinky.
     void loadDefaultProject(const QString &examplesDir);
     QVector<QPair<QString, QString>> files() const;
 
     Q_INVOKABLE void openFolder(const QUrl &url);
+    Q_INVOKABLE void openPath(const QString &path);
+    Q_INVOKABLE void openExample(const QString &name);
+    // New project in an (empty) folder: main.c with a register-level LED blink.
+    Q_INVOKABLE bool newProject(const QUrl &folder);
+    Q_INVOKABLE void clearRecentProjects();
+    Q_INVOKABLE int indexOfName(const QString &relativeName) const;
+    // Programmatic edits (Clock Configuration): the editor shows them, they are saved at once.
+    void setFileContent(int index, const QString &text);
+    bool writeFile(const QString &relativeName, const QString &text); // creates or overwrites
     Q_INVOKABLE bool addFile(const QString &relativeName);
     Q_INVOKABLE bool removeFile(int index);
     Q_INVOKABLE bool renameFile(int index, const QString &newName);
@@ -187,6 +203,7 @@ signals:
     void currentContentChanged();
     void projectPathChanged();
     void dirtyChanged();
+    void recentProjectsChanged();
 
 private:
     struct ProjectFile {
@@ -210,4 +227,6 @@ private:
     QFileSystemWatcher *watcher_ = nullptr;
     QTimer *saveTimer_ = nullptr;
     QSet<QString> writing_;
+    QString examplesDir_;
+    QStringList recent_;
 };

@@ -333,15 +333,24 @@ void CpuEngine::installHooks() {
                         uc_emu_stop(uc);
                         return;
                     }
-                    if (!cpu->breakpoints_.empty() &&
-                        cpu->breakpoints_.count(static_cast<uint32_t>(address) & ~1u)) {
-                        if (!cpu->skipNextBreakpoint_) {
+                    if (cpu->stopChecks_) {
+                        if (cpu->firstInsn_) {
+                            // Resuming from a breakpoint / inside the range: execute it.
+                            cpu->firstInsn_ = false;
+                        } else if (cpu->rangeEnd_ != 0 &&
+                                   (address < cpu->rangeStart_ || address >= cpu->rangeEnd_)) {
+                            cpu->lastStop_ = StopReason::StepDone;
+                            cpu->stopPc_ = static_cast<uint32_t>(address);
+                            uc_emu_stop(uc);
+                            return;
+                        } else if (!cpu->breakpoints_.empty() &&
+                                   cpu->breakpoints_.count(static_cast<uint32_t>(address) & ~1u)) {
                             cpu->lastStop_ = StopReason::Breakpoint;
+                            cpu->stopPc_ = static_cast<uint32_t>(address);
                             uc_emu_stop(uc);
                             return;
                         }
                     }
-                    cpu->skipNextBreakpoint_ = false;
                     // FPU not enabled in CPACR: NOCP UsageFault before the FP instruction runs.
                     if (cpu->fpAccess_ != 3 && size == 4 && cpu->isFpInstruction(static_cast<uint32_t>(address)) &&
                         !cpu->fpAccessAllowed()) {
@@ -368,14 +377,23 @@ void CpuEngine::installHooks() {
 
 void CpuEngine::addBreakpoint(uint32_t addr) {
     breakpoints_.insert(addr & ~1u);
+    stopChecks_ = true;
 }
 
 void CpuEngine::removeBreakpoint(uint32_t addr) {
     breakpoints_.erase(addr & ~1u);
+    stopChecks_ = !breakpoints_.empty() || rangeEnd_ != 0;
 }
 
 void CpuEngine::clearBreakpoints() {
     breakpoints_.clear();
+    stopChecks_ = rangeEnd_ != 0;
+}
+
+void CpuEngine::setStepRange(uint32_t start, uint32_t end) {
+    rangeStart_ = start & ~1u;
+    rangeEnd_ = end > start ? end : 0;
+    stopChecks_ = !breakpoints_.empty() || rangeEnd_ != 0;
 }
 
 bool CpuEngine::hasBreakpoint(uint32_t addr) const {
@@ -399,13 +417,19 @@ void CpuEngine::setFaultHandler(FaultHandler handler) { onFault_ = std::move(han
 CpuEngine::StopReason CpuEngine::run(uint64_t maxInsns) {
     if (!uc_)
         return StopReason::Fault;
+    const StopReason prevStop = lastStop_;
     lastStop_ = StopReason::Quantum;
     lastError_.clear();
     faultKind_ = FaultKind::None;
     runLimit_ = maxInsns;
     runExecuted_ = 0;
     const uint32_t pcNow = pc();
-    skipNextBreakpoint_ = hasBreakpoint(pcNow);
+    // Continuing from a breakpoint executes that instruction. Otherwise a run that starts on a
+    // breakpoint (the previous chunk ended there) or outside the step range (an interrupt
+    // handler was entered between chunks) stops at once.
+    firstInsn_ = forceResume_ ||
+                 ((prevStop == StopReason::Breakpoint || prevStop == StopReason::StepDone) && pcNow == stopPc_);
+    forceResume_ = false;
     const uint64_t start = static_cast<uint64_t>(pcNow) | 1ull;
     // count = 0: the code hook above enforces maxInsns and keeps the exact count.
     rewindToCurrent_ = false;
@@ -422,7 +446,8 @@ CpuEngine::StopReason CpuEngine::run(uint64_t maxInsns) {
             --runExecuted_;
     }
     insnCount_ += runExecuted_;
-    if (err != UC_ERR_OK && lastStop_ != StopReason::Breakpoint && lastStop_ != StopReason::InterruptHook) {
+    if (err != UC_ERR_OK && lastStop_ != StopReason::Breakpoint && lastStop_ != StopReason::StepDone &&
+        lastStop_ != StopReason::InterruptHook) {
         lastStop_ = StopReason::Fault;
         if (faultKind_ == FaultKind::None) {
             switch (err) {

@@ -76,7 +76,8 @@ public:
     void readBanked();
 
     // Sleep: WFI with no pending interrupt; PC is already past the WFI (see Machine).
-    enum class StopReason { None, Quantum, Breakpoint, Fault, InterruptHook, Halted, Sleep };
+    // StepDone: PC left the step range (setStepRange), the debugger's line step is over.
+    enum class StopReason { None, Quantum, Breakpoint, Fault, InterruptHook, Halted, Sleep, StepDone };
     enum class FaultKind { None, ReadUnmapped, WriteUnmapped, FetchUnmapped, InvalidInsn, Unaligned, NoCoprocessor, Other };
 
     StopReason run(uint64_t maxInsns);
@@ -97,6 +98,16 @@ public:
     void clearBreakpoints();
     bool hasBreakpoint(uint32_t addr) const;
     std::vector<uint32_t> breakpoints() const;
+    // Range stepping (GDB vCont;r): run stops with StepDone before the first instruction
+    // outside [start, end). The instruction at the current PC always executes.
+    void setStepRange(uint32_t start, uint32_t end);
+    void clearStepRange() { setStepRange(0, 0); }
+    bool stepRangeActive() const { return rangeEnd_ != 0; }
+    // The next run executes the instruction at PC even if it has a breakpoint or lies outside
+    // the step range (a debugger's continue / step starts there). Without it only a run that
+    // continues from a breakpoint / step stop at the same PC skips it, so a chunk that merely
+    // ended on a breakpoint address does not miss it.
+    void resumeHere() { forceResume_ = true; }
 
     using InterruptHandler = std::function<void(uint32_t intno)>;
     void setInterruptHandler(InterruptHandler handler);
@@ -146,6 +157,12 @@ private:
     std::function<bool()> irqShouldStop_;
     FaultHandler onFault_;
     std::unordered_set<uint32_t> breakpoints_;
+    bool stopChecks_ = false; // breakpoints or a step range: checked in the code hook
+    uint32_t rangeStart_ = 0;
+    uint32_t rangeEnd_ = 0;
+    bool firstInsn_ = false;  // the run's first instruction: ignores breakpoint and range
+    bool forceResume_ = false;
+    uint32_t stopPc_ = 0;     // PC of the last Breakpoint / StepDone stop
     uint64_t codeHook_ = 0;
     uint64_t intrHook_ = 0;
     uint64_t memHook_ = 0;
@@ -156,7 +173,6 @@ private:
     uint32_t faultAddress_ = 0;
     StopReason lastStop_ = StopReason::None;
     std::string lastError_;
-    bool skipNextBreakpoint_ = false;
     uint32_t currentInsn_ = 0; // address of the instruction being executed (code hook)
     // WFI instructions (halfword 0xBF30) in flash, one bit per halfword; rebuilt on every
     // flushCodeCache(), i.e. after each firmware load.

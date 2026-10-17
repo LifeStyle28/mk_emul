@@ -7,20 +7,27 @@
 Подготовка: `scripts\build.bat`, затем запустить `build\mk_emul.exe`.
 Для каждого пункта: **действие** → *что должно получиться*. Отмечайте `[x]`.
 
+Где что находится: открыть проект, пример, прошивку — меню **File**; сборка, уровень
+оптимизации и тактирование — **Build**; запуск и шаги — **Debug** и кнопки на панели
+инструментов. У каждого действия одно название везде (меню, кнопка, подсказка) и сочетание
+клавиш, оно написано в меню справа. Разделы 15–18 — новое: отладка по исходнику, оптимизация,
+тактирование, меню.
+
 ## 1. Запуск
-- [ ] Запустить `mk_emul.exe` → *открывается окно «mk_emul · STM32F407», внизу статус «Builtin blinky loaded» и
-      «(builtin blinky)» справа, в редакторе `blinky/main.c`, PC = `0x08000008`, индикатор STOPPED.
-      Кнопка Builtin LED только загружает прошивку, запускает её Run.*
+- [ ] Запустить `mk_emul.exe` → *открывается окно «mk_emul · STM32F407 — <проект>», внизу статус
+      «Builtin blinky loaded» и «(builtin blinky)» справа, в редакторе последний открытый проект
+      (при первом запуске `blinky/main.c`), PC = `0x08000008`, индикатор STOPPED.
+      File → Load Demo Firmware только загружает прошивку, запускает её Run.*
 
 ## 2. Встроенная прошивка и управление выполнением
-- [ ] **Builtin LED**, затем **Run** → *4 светодиода на плате мигают, индикатор RUNNING, счётчик
-      `INSNS` в панели Peripherals растёт.*
+- [ ] **File → Load Demo Firmware**, затем **Run** → *4 светодиода на плате мигают, индикатор
+      RUNNING, счётчик `INSNS` на вкладке Peripherals (панель слева внизу) растёт.*
 - [ ] **Pause** → *светодиоды замирают, в дизассемблере подсвечена текущая инструкция (PC).*
-- [ ] **Step** 5 раз → *PC меняется на каждом шаге, `INSNS` растёт ровно на 1 за шаг.*
+- [ ] **Step Instr** 5 раз → *PC меняется на каждом шаге, `INSNS` растёт ровно на 1 за шаг.*
 - [ ] **Reset** → *PC возвращается к началу программы, светодиоды гаснут.*
 
 ## 3. Компиляция из редактора (Build & Load)
-- [ ] **Open project…** → `examples\uart_printf` → **Build & Load** → *в панели Build
+- [ ] **File → Open Project…** (Ctrl+O) → `examples\uart_printf` → **Build & Load** (Ctrl+B) → *в панели Build
       появляется лог gcc и строка `Linked ...firmware.elf`, статус «Loaded ...».*
 - [ ] **Run** → *в панели UART: `STM32F407 emulator UART2`, затем строки `tick`; все 4 светодиода
       мигают одновременно.*
@@ -28,11 +35,12 @@
       строки, этот же номер стоит у строки с ошибкой в редакторе, в конце лога `gcc exit 1`;
       эмулятор продолжает работать со старой прошивкой.* Вернуть `;` обратно.
 
-- [ ] **Expand** в панели Source (или F11) → *редактор занимает всё окно под панелью
-      инструментов, Build & Load и Run работают.* **Restore** (или F11) → *все панели на месте.*
+- [ ] **Expand** в панели Source (или Ctrl+M, View → Expand Editor) → *редактор занимает всё окно
+      под панелью инструментов, Build & Load и Run работают.* **Restore** (или Ctrl+M) → *все
+      панели на месте.* (F11 теперь Step Into, как в Visual Studio.)
 
 ## 4. Прерывания: SysTick и кнопка (EXTI)
-- [ ] **Open project…** → `examples\systick_exti` → **Build & Load** → **Run** → *зелёный светодиод
+- [ ] **File → Open Example** → `examples\systick_exti` → **Build & Load** → **Run** → *зелёный светодиод
       (PD12) мигает 2–3 раза в секунду (200 мс горит, 200 мс нет), статус Running, справа
       `speed ×1.00`.*
 - [ ] Скорость **Slow ×0.1** → *мигание в 10 раз медленнее, `speed ×0.10`*; **Max speed** →
@@ -43,22 +51,24 @@
       нажатии (по нажатию, не по отпусканию).*
 - [ ] В Peripherals: `SysTick_LOAD = 0x00003E7F` (16000−1), `SysTick_VAL` меняется.
 
-## 5. Точки останова
-- [ ] Остановить (Pause), в дизассемблере выбрать адрес инструкции на несколько строк ниже PC
-      (например `0x08000266`), ввести его в поле **BP** → **Add** → *строка помечена как breakpoint.*
+## 5. Точки останова по адресу
+- [ ] **File → Load Demo Firmware** (у неё нет отладочной информации, gdb не запускается) → Pause,
+      в дизассемблере выбрать адрес инструкции на несколько строк ниже PC (например `0x08000014`),
+      вкладка **Breakpoints** панели Debug → ввести адрес → **Add** → *строка в дизассемблере
+      помечена как breakpoint, в списке `0x08000014`.*
 - [ ] **Run** → *эмулятор сам останавливается на этом адресе, статус Breakpoint, PC = адрес точки.*
 - [ ] **Run** ещё раз → *снова останавливается на той же точке (в цикле), не «проскакивает» её.*
-- [ ] **Del** с тем же адресом → **Run** → *выполняется без остановок.*
+- [ ] **×** у точки в списке → **Run** → *выполняется без остановок.*
 
 ## 6. HardFault
-- [ ] **Open project…** → `examples\hardfault` → **Build & Load** → **Run** → *зелёный светодиод
+- [ ] **File → Open Example** → `examples\hardfault` → **Build & Load** → **Run** → *зелёный светодиод
       мигнёт несколько раз, затем остановка со статусом
       `HardFault: read unmapped @ 0x60000000`, PC внутри `HardFault_Handler`.*
 - [ ] Peripherals: *`SCB_CFSR = 0x00008200`, `SCB_HFSR = 0x40000000`, `SCB_BFAR = 0x60000000`.*
 - [ ] **Run** → *загорается красный светодиод (его включает HardFault_Handler).*
 
 ## 6а. FPU в прерываниях
-- [ ] **Open project…** → `examples\fpu_irq` → **Build & Load** → **Run** → *зелёный светодиод
+- [ ] **File → Open Example** → `examples\fpu_irq` → **Build & Load** → **Run** → *зелёный светодиод
       мигает, красный не загорается ни через несколько секунд, ни на скорости Max.*
 - [ ] Pause, если PC внутри `SysTick_Handler` (xPSR = 15), в регистрах *LR = `0xFFFFFFE9`*
       (возврат с расширенным фреймом FPU).
@@ -73,10 +83,12 @@
       прерывания младшие биты xPSR = номер исключения (15 для SysTick, 3 для HardFault).
 
 ## 8. Загрузка готовой прошивки
-- [ ] **Open FW…** → `build\tests\firmware\blinky.elf` → **Run** → *светодиоды мигают.*
-- [ ] **Open FW…** → любой не-прошивочный файл (например, `README.md`) → *статус «Not a firmware image: …»,
+- [ ] **File → Open Firmware…** (Ctrl+Shift+O) → `build\tests\firmware\blinky.elf` → **Run** →
+      *светодиоды мигают.*
+- [ ] **File → Open Firmware…** → любой не-прошивочный файл (например, `README.md`) → *статус «Not a firmware image: …»,
       прежняя прошивка остаётся загруженной.*
-- [ ] В поле Memory или BP ввести `zzz` → *статус «Invalid address …», ничего не меняется.*
+- [ ] В поле Memory ввести `zzz` → **Go** → *статус «Invalid address …», ничего не меняется.*
+      То же в поле адреса на вкладке Breakpoints → *сообщение «Invalid address …» в панели Debug.*
 
 ## 9. Прочее
 - [ ] Слайдер ADC меняет значение `ADC PA1 · N` (в примерах АЦП не используется, проверяется
@@ -86,7 +98,7 @@
 - [ ] Закрыть окно во время Run → *программа завершается без зависания и ошибок.*
 
 ## 10. Проект на STM32CubeF4 HAL
-- [ ] **Open project…** → `examples\hal_blinky` → **Build & Load** → *кнопка на время сборки
+- [ ] **File → Open Example** → `examples\hal_blinky` → **Build & Load** → *кнопка на время сборки
       становится серой «Building…», окно не зависает; в логе строки `CC cube/hal/Src/...` и
       `Linked ... in N s`.*
 - [ ] **Run** → *в UART `HAL ok, SYSCLK=168000000`, затем `tick 1`, `tick 2`, … примерно 10 в
@@ -97,7 +109,7 @@
       сборка быстрее.*
 
 ## 11. FreeRTOS
-- [ ] **Open project…** → `examples\freertos` → **Build & Load** → **Run** → *в UART
+- [ ] **File → Open Example** → `examples\freertos` → **Build & Load** → **Run** → *в UART
       `FreeRTOS start`, затем `rx 1 a=.. b=..`, `rx 2 …` раз в 100 мс, числа `a` и `b` растут
       примерно поровну; зелёный мигает часто, красный не горит.*
 - [ ] Кнопка **USER PA0** → *оранжевый светодиод переключается (семафор из прерывания).*
@@ -106,7 +118,7 @@
       float).*
 
 ## 12. ШИМ на TIM4
-- [ ] **Open project…** → `examples\tim4_pwm` → **Build & Load** → **Run** → *оранжевый светится
+- [ ] **File → Open Example** → `examples\tim4_pwm` → **Build & Load** → **Run** → *оранжевый светится
       тускло, красный наполовину, синий полностью; зелёный плавно разгорается и гаснет
       (около 2 с на цикл).*
 - [ ] Там же, пока идёт выполнение → *статус внизу `Running (WFI sleep)` (основной цикл спит в
@@ -114,16 +126,16 @@
 - [ ] Pause → *PC стоит сразу после инструкции `wfi` или внутри `SysTick_Handler`.*
 
 ## 13. Консоль, предупреждения, диалоги
-- [ ] Запустить `uart_printf`, затем загрузить другую прошивку (Build & Load / Open FW… /
-      Builtin LED) → *консоль UART очищается, старые строки не остаются.*
+- [ ] Запустить `uart_printf`, затем загрузить другую прошивку (Build & Load / Open Firmware… /
+      Load Demo Firmware) → *консоль UART очищается, старые строки не остаются.*
 - [ ] Прошивка, пишущая в неэмулируемую периферию (например,
       `*(volatile uint32_t *)0x40026010 = 1;` — DMA1) → **Run** → *в Build log
       `emulator warning: write to unemulated peripheral DMA1 @ 0x40026010 (value dropped)`,
       по одному разу на регистр.*
-- [ ] Нажать **Open project…** → *пока открыт диалог, Build & Load недоступна (серая).*
+- [ ] **File → Open Project…** → *пока открыт диалог, Build & Load недоступна (серая).*
 
 ## 14. Проект CubeMX / CubeIDE (если есть)
-- [ ] **Open project…** → папка проекта CubeMX для STM32F407 (с `Core/Inc`, `Core/Src`) →
+- [ ] **File → Open Example** → папка проекта CubeMX для STM32F407 (с `Core/Inc`, `Core/Src`) →
       **Build & Load** → *в логе `Skipping Core/Startup/startup_stm32f407vgtx.s: the emulator's
       startup file is used`, сборка проходит, `Drivers/` в списке файлов нет.*
       С FreeRTOS CubeMX ставит HAL Timebase Source = TIM6/TIM7 — они эмулируются. Другой таймер
@@ -131,13 +143,83 @@
       Копия FreeRTOS из `Middlewares` проекта используется вместо встроенной (обёртка
       CMSIS-RTOS2 на эмуляторе не проверялась).
 
+## 15. Отладка по исходнику (gdb)
+Build & Load сам запускает `arm-none-eabi-gdb` из тулчейна и подключает его к GDB-серверу
+эмулятора. Состояние — в заголовке панели Debug справа: `gdb · stopped / running`.
+- [ ] **File → Open Example → systick_exti** → **Build & Load** → *в панели Debug `gdb · stopped`,
+      внизу `gdb: stopped · Reset_Handler() at startup_stm32f407xx.s (not in the project)`.*
+- [ ] Кликнуть по номеру строки `ticks++;` в `SysTick_Handler` (или поставить туда курсор,
+      Ctrl+G → номер строки → Enter, затем F9) → *красная точка у номера строки, на вкладке
+      Breakpoints `main.c:<строка>`.*
+- [ ] **Run** (F5) → *остановка на этой строке: жёлтая стрелка и подсветка строки, в панели
+      Debug «Breakpoint 1 at main.c:N», на вкладке Variables в Globals `ticks`.*
+- [ ] **Run** ещё раз → *снова там же, значение `ticks` на 1 больше и выделено красным
+      (изменилось с прошлой остановки).*
+- [ ] Клик по точке ещё раз → *точка исчезла.* Поставить точку на строку `delay_ms(200);`
+      в `main` → **Run** → **Step Into** (F11) → *стрелка в `delay_ms`, вкладка Call Stack:
+      `#0 delay_ms() main.c:N`, `#1 main() main.c:M`; Variables: `ms = 200`, `start`.*
+- [ ] Клик по `#1 main()` в Call Stack → *редактор показывает строку вызова в `main`, Variables —
+      переменные `main`.* Клик по `#0` — обратно.
+- [ ] **Step Out** (Shift+F11) → *возврат в `main`, сообщение «Step Out: …»*; **Step Over** (F10)
+      несколько раз → *стрелка идёт по строкам `main`, `delay_ms` выполняется целиком (200 мс
+      в реальном времени).*
+- [ ] Вкладка **Watch**: ввести `ticks * 2` → Enter → *значение выражения;* ввести
+      `GPIOD->ODR` → *значение регистра;* ввести `nosuch` → *серым «… unable to create …».*
+- [ ] Вкладка Variables, галочка **Hex** → *значения в hex*; двойной клик по значению `ticks` →
+      ввести `1000` → Enter → *значение стало 1000, программа видит новое значение.*
+- [ ] **Run** → во время работы клик по номеру строки внутри цикла `main` → *эмулятор сам
+      останавливается на новой точке (gdb прерывает, ставит точку, продолжает).*
+- [ ] **Pause** (Shift+F5) во время работы → *стрелка на текущей строке, «Paused at …».*
+- [ ] **Reset** → *стрелка уходит в `Reset_Handler` (вне проекта), точки останова сохраняются.*
+- [ ] Структуры и массивы: **File → Open Example → hal_blinky** → Build & Load → в Globals ▸ у
+      `huart2` → *раскрывается дерево полей (`Instance`, `Init` ▸ …).*
+
+## 16. Уровень оптимизации
+- [ ] Выпадающий список рядом с Build & Load (или **Build → Optimization**) → **-Os** → Build &
+      Load → *в логе `Optimization: -Os` и `Size (-Os): flash N bytes` — меньше, чем при -O0;
+      программа работает так же.* Выбор сохраняется после перезапуска.
+- [ ] С **-O2**: точка останова на строке внутри цикла срабатывает; часть локальных переменных
+      показана как `<optimized out>` — так и должно быть (как в CubeIDE в Release).
+- [ ] Переключить обратно на **-O0** → Build & Load → *в логе `N library objects up to date`:
+      библиотеки (HAL) для каждого уровня кешируются отдельно.*
+
+## 17. Тактирование (Clock Configuration)
+- [ ] **Clock…** на панели (или **Build → Clock Configuration…**) → *дерево тактов как в
+      CubeMX: HSI 16 МГц, HSE 8 МГц, PLL (/M, ×N, /P, /Q), System Clock Mux, AHB/APB1/APB2,
+      частоты таймеров, flash latency; по умолчанию 168 МГц, «✔ Configuration is within the
+      STM32F407 limits».*
+- [ ] APB1 Prescaler = **/2** → *APB1 periph `84 MHz` красным, ошибка «APB1 (PCLK1) 84 MHz exceeds
+      42 MHz», Write to Project недоступна.* ×N = 400 → *красные VCO/PLLCLK/SYSCLK.* Пресет
+      **168 MHz** возвращает всё обратно.
+- [ ] Вкладка **Generated code** → *функция `SystemClock_Config()` с комментарием-сводкой частот
+      (для HAL-проекта — через `HAL_RCC_OscConfig`, для регистрового — через RCC/FLASH/PWR).*
+- [ ] Открыть `hal_blinky` → **Clock…** → пресет **84 MHz (HSI+PLL)** → **Write to Project** →
+      *сообщение «SystemClock_Config() in main.c was replaced», функция в `main.c` заменена.*
+      Build & Load → Run → *в UART `HAL ok, SYSCLK=84000000`, `tick` идут как раньше (10 в с);
+      в диалоге строки «emulator: 84 MHz» зелёные (эмулятор совпал с настройкой).*
+- [ ] **From Emulator** → *дерево показывает то, что настроила работающая прошивка.*
+- [ ] Регистровый проект (например `blinky`) → **Write to Project** → *добавлены `clock_config.c`
+      и `clock_config.h`; после вызова `SystemClock_Config()` в начале `main` и Build & Load
+      «emulator» в диалоге показывает выбранные частоты.*
+
+## 18. Меню и навигация
+- [ ] Меню **File / Build / Debug / View** (также Alt+F, Alt+B, Alt+D, Alt+V) → *у каждого пункта
+      справа сочетание клавиш; File → Open Example показывает все примеры, Recent Projects —
+      недавно открытые проекты.*
+- [ ] Закрыть и снова запустить программу → *открывается последний проект.*
+- [ ] **File → New Project…** → пустая папка → *в ней создан `main.c` (мигание PD12), проект
+      открыт; Build & Load → Run → зелёный мигает.*
+- [ ] **View → Go to Line…** (Ctrl+G) → номер → Enter → *курсор и прокрутка на этой строке.*
+
 ## Автоматический прогон
 `scripts\ui.ps1` делает скриншоты окна, нажимает кнопки через UI Automation (без мыши) и вписывает
 текст в поля. Так этот чек-лист можно пройти без человека. Примеры:
 - `ui.ps1 shot -Out s.png`
 - `ui.ps1 uia-press -Name Run`
 - `ui.ps1 uia-set -Name 1152 -Text C:\путь` (поле пути в диалоге выбора папки)
-- `ui.ps1 click -X 268 -Y 46`
+- `ui.ps1 keys -Text "^b"` (сочетания клавиш: Ctrl+B — Build & Load, `{F9}`, `{F5}`, `%f` —
+  меню File)
+- `ui.ps1 click -X 268 -Y 46` (только если окно не перекрыто другими: клик идёт по экрану)
 
 ## Если что-то не так
 Запишите: какой пункт, что ожидалось, что получилось, скриншот. Для проблем ядра удобно

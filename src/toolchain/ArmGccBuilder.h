@@ -24,8 +24,15 @@ public:
     QString toolchainPath() const { return gccPath_; }
     QString findToolchain() const;
     // Thread-safe apart from toolchainPath: the UI runs it on a worker thread.
+    // optimization: one of optimizationLevels() ("-O0" ... "-Os"); project and library code
+    // are built with it, library objects are cached per level.
     bool compile(const QVector<QPair<QString, QString>> &files, const QString &workDir,
-                 const QString &deviceDir, QString *elfOut, QString *log);
+                 const QString &deviceDir, QString *elfOut, QString *log,
+                 const QString &optimization = QStringLiteral("-O0"));
+
+    static QStringList optimizationLevels();
+    // Flash (text + data) and RAM (data + bss) use of a linked ELF, from arm-none-eabi-size.
+    bool elfSize(const QString &elf, quint32 *flash, quint32 *ram) const;
 
     // HAL sources (file names in deviceDir/cube/hal/Src) for the modules enabled in a
     // stm32f4xx_hal_conf.h. Public for tests.

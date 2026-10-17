@@ -1,16 +1,21 @@
 // The in-app builder (Build & Load): builds the examples the same way the UI does, with the
 // bundled device files, HAL and FreeRTOS, then runs them on the Machine.
 #include "TestUtil.h"
+#include "core/ClockConfig.h"
 #include "toolchain/ArmGccBuilder.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <QMap>
+#include <QRegularExpression>
 
 #include <gtest/gtest.h>
 
+#include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -183,6 +188,109 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     const auto uart = runElf(elf, 40000000);
     EXPECT_EQ(uart.rfind("HAL ok, SYSCLK=168000000\r\n", 0), 0u) << uart;
     EXPECT_NE(uart.find("tick 2\r\n"), std::string::npos) << uart;
+}
+
+quint32 flashBytes(const QString &log) {
+    static const QRegularExpression re("Size \\(-O.\\): flash (\\d+) bytes");
+    const auto m = re.match(log);
+    return m.hasMatch() ? m.captured(1).toUInt() : 0;
+}
+
+// Every optimization level of the Build menu: the examples still work, and optimized code is
+// smaller than -O0.
+TEST_F(BuilderTest, BuildsAtEveryOptimizationLevel) {
+    QMap<QString, quint32> halFlash;
+    for (const QString &opt : ArmGccBuilder::optimizationLevels()) {
+        SCOPED_TRACE(opt.toStdString());
+        for (const char *name : {"uart_printf", "systick_exti", "fpu_irq"}) {
+            SCOPED_TRACE(name);
+            ASSERT_TRUE(builder.compile(exampleFiles(name), kWork + "/opt_" + name, kDevice, &elf, &log, opt))
+                << log.toStdString();
+            EXPECT_TRUE(log.contains("Optimization: " + opt)) << log.toStdString();
+            EXPECT_TRUE(log.contains(" " + opt + " ")) << "flags passed to gcc";
+            const auto uart = runElf(elf, 3000000);
+            if (QString(name) == "uart_printf")
+                EXPECT_NE(uart.find("tick"), std::string::npos) << uart;
+        }
+        ASSERT_TRUE(builder.compile(exampleFiles("hal_blinky"), kWork + "/opt_hal", kDevice, &elf, &log, opt))
+            << log.toStdString();
+        const auto uart = runElf(elf, 40000000);
+        EXPECT_EQ(uart.rfind("HAL ok, SYSCLK=168000000\r\n", 0), 0u) << uart;
+        EXPECT_NE(uart.find("tick 2\r\n"), std::string::npos) << uart;
+        halFlash[opt] = flashBytes(log);
+        EXPECT_GT(halFlash[opt], 1000u) << log.toStdString();
+    }
+    for (auto it = halFlash.cbegin(); it != halFlash.cend(); ++it)
+        std::cout << "hal_blinky " << it.key().toStdString() << ": flash " << it.value() << " bytes\n";
+    EXPECT_LT(halFlash["-Os"], halFlash["-O0"] * 3 / 4) << "-Os must shrink the HAL project noticeably";
+    EXPECT_LT(halFlash["-O2"], halFlash["-O0"]);
+
+    // The library cache is kept per level: going back to -O0 compiles only the project.
+    ASSERT_TRUE(builder.compile(exampleFiles("hal_blinky"), kWork + "/opt_hal", kDevice, &elf, &log, "-O0"));
+    EXPECT_TRUE(log.contains("library objects up to date")) << log.toStdString();
+}
+
+// Clock Configuration dialog: the generated SystemClock_Config() runs on the emulator and sets
+// exactly the frequencies the dialog computed.
+TEST_F(BuilderTest, GeneratedClockConfigRunsOnTheEmulator) {
+    std::vector<ClockConfig> configs(4);
+    configs[1].pllSource = ClockConfig::Hsi; // 84 MHz from HSI: /8 x168 /4
+    configs[1].pllM = 8;
+    configs[1].pllN = 168;
+    configs[1].pllP = 4;
+    configs[1].apb1Div = 2;
+    configs[1].apb2Div = 1;
+    configs[2].sysclkSource = ClockConfig::Hse; // 8 MHz HSE, AHB /2
+    configs[2].ahbDiv = 2;
+    configs[2].apb1Div = 1;
+    configs[2].apb2Div = 1;
+    configs[3].sysclkSource = ClockConfig::Hsi; // back to the reset clock, APB2 /4
+    configs[3].apb1Div = 1;
+    configs[3].apb2Div = 4;
+    for (const ClockConfig &c : configs) {
+        const auto r = c.compute();
+        SCOPED_TRACE(c.summary());
+        ASSERT_TRUE(r.ok()) << r.errors[0];
+        const QString main = "#include \"stm32f407xx.h\"\n" + QString::fromStdString(c.registerCode()) +
+                             QString("int main(void) {\n"
+                                     "    SystemClock_Config();\n"
+                                     "    RCC->AHB1ENR |= RCC_AHB1ENR_GPIODEN;\n"
+                                     "    GPIOD->MODER = 0x55u << 24;\n"
+                                     "    GPIOD->BSRR = SystemCoreClock == %1u ? 1u << 12 : 1u << 14;\n"
+                                     "    for (;;) {\n    }\n}\n")
+                                 .arg(r.hclk);
+        ASSERT_TRUE(build({{"main.c", main}}, "clock")) << log.toStdString();
+        Machine m;
+        std::string err;
+        ASSERT_TRUE(m.initialize(&err)) << err;
+        ASSERT_TRUE(m.loadFirmware(elf.toStdString()).ok);
+        EXPECT_NE(runFor(m, 300000), CpuEngine::StopReason::Fault) << m.status();
+        EXPECT_EQ(m.rcc().sysclk(), r.sysclk);
+        EXPECT_EQ(m.rcc().hclk(), r.hclk);
+        EXPECT_EQ(m.rcc().pclk1(), r.pclk1);
+        EXPECT_EQ(m.rcc().pclk2(), r.pclk2);
+        EXPECT_EQ(m.rcc().timclk1(), r.tim1);
+        EXPECT_EQ(m.rcc().timclk2(), r.tim2);
+        EXPECT_EQ(m.snapshot().leds, 0x1u) << "green: SystemCoreClockUpdate() agrees";
+        const ClockConfig back = ClockConfig::fromRegisters(m.rcc().pllcfgr(), m.rcc().cfgr());
+        EXPECT_EQ(back.compute().hclk, r.hclk) << "From Emulator reads the same tree back";
+    }
+
+    // HAL project (hal_blinky): its SystemClock_Config() replaced by the generated one.
+    std::string main;
+    ASSERT_TRUE(ClockConfig::replaceFunction(readText(kSource + "/examples/hal_blinky/main.c").toStdString(),
+                                             configs[1].halCode(), &main));
+    const Files files{{"main.c", QString::fromStdString(main)},
+                      {"stm32f4xx_hal_conf.h", readText(kSource + "/examples/hal_blinky/stm32f4xx_hal_conf.h")}};
+    ASSERT_TRUE(build(files, "clock_hal")) << log.toStdString();
+    const auto uart = runElf(elf, 20000000);
+    EXPECT_EQ(uart.rfind("HAL ok, SYSCLK=84000000\r\n", 0), 0u) << uart;
+    EXPECT_NE(uart.find("tick 2\r\n"), std::string::npos) << "HAL_Delay follows the new HCLK: " << uart;
+}
+
+TEST_F(BuilderTest, RejectsUnknownOptimization) {
+    EXPECT_FALSE(builder.compile(exampleFiles("blinky"), kWork + "/opt_bad", kDevice, &elf, &log, "-O9"));
+    EXPECT_TRUE(log.contains("Unknown optimization")) << log.toStdString();
 }
 
 TEST_F(BuilderTest, ReportsCompileErrors) {

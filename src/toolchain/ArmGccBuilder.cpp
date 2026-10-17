@@ -113,10 +113,46 @@ bool hasSuffix(const QString &name, std::initializer_list<const char *> suffixes
 
 } // namespace
 
+QStringList ArmGccBuilder::optimizationLevels() {
+    return {"-O0", "-Og", "-O1", "-O2", "-O3", "-Os"};
+}
+
+bool ArmGccBuilder::elfSize(const QString &elf, quint32 *flash, quint32 *ram) const {
+    QString gcc = gccPath_.isEmpty() ? findToolchain() : gccPath_;
+    if (gcc.isEmpty())
+        return false;
+    QString size = gcc;
+    size.replace(QRegularExpression("gcc(\\.exe)?$"), "size\\1");
+    QProcess p;
+    p.start(size, {elf});
+    if (!p.waitForFinished(30000) || p.exitCode() != 0)
+        return false;
+    // "   text    data     bss     dec     hex filename" / "   1234     8   1576  ..."
+    const QStringList lines = QString::fromUtf8(p.readAll()).split('\n', Qt::SkipEmptyParts);
+    if (lines.size() < 2)
+        return false;
+    const QStringList v = lines[1].simplified().split(' ');
+    if (v.size() < 3)
+        return false;
+    const quint32 text = v[0].toUInt();
+    const quint32 data = v[1].toUInt();
+    const quint32 bss = v[2].toUInt();
+    if (flash)
+        *flash = text + data;
+    if (ram)
+        *ram = data + bss;
+    return true;
+}
+
 bool ArmGccBuilder::compile(const QVector<QPair<QString, QString>> &files, const QString &workDir,
-                            const QString &deviceDir, QString *elfOut, QString *log) {
+                            const QString &deviceDir, QString *elfOut, QString *log, const QString &optimization) {
     QElapsedTimer clock;
     clock.start();
+    if (!optimizationLevels().contains(optimization)) {
+        if (log)
+            *log = "Unknown optimization level " + optimization + "\n";
+        return false;
+    }
     const QString gcc = gccPath_.isEmpty() ? findToolchain() : gccPath_;
     if (gcc != gccPath_) {
         gccPath_ = gcc;
@@ -192,7 +228,9 @@ bool ArmGccBuilder::compile(const QVector<QPair<QString, QString>> &files, const
     // 2. Flags.
     const QStringList cpu{"-mcpu=cortex-m4", "-mthumb", "-mfpu=fpv4-sp-d16", "-mfloat-abi=hard"};
     QStringList cflags = cpu;
-    cflags << "-g3" << "-O0" << "-ffunction-sections" << "-fdata-sections" << "-DSTM32F407xx";
+    // Debug info at every level: the debugger needs it, and it does not change the code.
+    cflags << "-g3" << optimization << "-ffunction-sections" << "-fdata-sections" << "-DSTM32F407xx";
+    accumulated += "Optimization: " + optimization + "\n";
     for (const QString &d : includeDirs)
         cflags << "-I" << d;
     if (hal) {
@@ -236,7 +274,8 @@ bool ArmGccBuilder::compile(const QVector<QPair<QString, QString>> &files, const
     // 4. Compile jobs: project files always, library files only when their cached object is
     // missing or was built with other flags / project headers.
     const QString objDir = workDir + "/obj";
-    const QString libDir = workDir + "/lib";
+    // One library cache per level: switching -O0 <-> -O2 back and forth does not rebuild HAL.
+    const QString libDir = workDir + "/lib" + QString(optimization).remove('-');
     QDir().mkpath(objDir);
     QDir().mkpath(libDir);
     QCryptographicHash stampHash(QCryptographicHash::Sha1);
@@ -349,6 +388,10 @@ bool ArmGccBuilder::compile(const QVector<QPair<QString, QString>> &files, const
         return fail(QString("link failed (exit %1)").arg(p.exitCode()));
     if (elfOut)
         *elfOut = elf;
+    quint32 flash = 0;
+    quint32 ram = 0;
+    if (elfSize(elf, &flash, &ram))
+        accumulated += QString("\nSize (%1): flash %2 bytes, RAM %3 bytes (static)\n").arg(optimization).arg(flash).arg(ram);
     if (log)
         *log = accumulated + QString("\nLinked %1 in %2 s\n").arg(elf).arg(clock.elapsed() / 1000.0, 0, 'f', 1);
     return true;

@@ -8,6 +8,8 @@ add_executable(mk_emul_tests
     test_disasm.cpp
     test_pacer.cpp
     test_nvic.cpp
+    test_gdbstub.cpp
+    test_clock.cpp
     cortex_programs.inc
 )
 set_target_properties(mk_emul_tests PROPERTIES AUTOMOC OFF AUTORCC OFF)
@@ -140,9 +142,29 @@ if(WIN32)
     )
 endif()
 
+# Debugger end to end: arm-none-eabi-gdb (MI) <-> GDB server <-> Machine, as in the UI.
+add_executable(mk_emul_debug_tests test_debugger.cpp ${CMAKE_SOURCE_DIR}/src/toolchain/ArmGccBuilder.cpp)
+set_target_properties(mk_emul_debug_tests PROPERTIES AUTOMOC ON)
+target_include_directories(mk_emul_debug_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(mk_emul_debug_tests PRIVATE mk_emul_debug GTest::gtest)
+target_compile_definitions(mk_emul_debug_tests PRIVATE
+    MK_EMUL_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    MK_EMUL_BUILD_DIR="${CMAKE_CURRENT_BINARY_DIR}/debug_work")
+if(MSVC)
+    target_compile_options(mk_emul_debug_tests PRIVATE /W3 /utf-8 /Zc:__cplusplus)
+endif()
+if(WIN32)
+    add_custom_command(TARGET mk_emul_debug_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:unicorn> $<TARGET_FILE_DIR:mk_emul_debug_tests>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:Qt6::Core> $<TARGET_FILE:Qt6::Network>
+                $<TARGET_FILE_DIR:mk_emul_debug_tests>
+    )
+endif()
+
 include(GoogleTest)
 gtest_discover_tests(mk_emul_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(mk_emul_builder_tests DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 300)
+gtest_discover_tests(mk_emul_debug_tests DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 120)
 
 # End-to-end: the real mk_emul.exe in --headless mode.
 add_test(NAME headless.builtin_blinky COMMAND mk_emul --headless 20000)
